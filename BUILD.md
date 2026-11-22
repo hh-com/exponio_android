@@ -341,7 +341,6 @@ Nach jedem Update: bauen, auf dem Handy testen (Foto aufnehmen, Verbindung teste
 | `Duplicate class` / `2 files found with path META-INF/…` | Neue Bibliothek bringt doppelte Metadaten mit: in `android/app/build.gradle` unter `packaging.resources.excludes` ergänzen |
 | Neues Plugin „not implemented on android“ | `npx cap sync android` nachholen und neu bauen. Eigene Plugins in `MainActivity.kt` registrieren |
 | Gradle hängt / sehr langsam beim ersten Mal | Normal: lädt Gradle und Abhängigkeiten (mehrere hundert MB). Danach schnell. |
-| Weitere App-Probleme (FTPS/SFTP, Berechtigungen) | [README.md, Abschnitt 7](README.md#7-fehlerbehebung) |
 
 ---
 
