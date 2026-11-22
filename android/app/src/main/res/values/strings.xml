@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Exponio</string>
+    <string name="title_activity_main">Exponio</string>
+    <string name="package_name">org.exponio.app</string>
+    <string name="custom_url_scheme">org.exponio.app</string>
+</resources>

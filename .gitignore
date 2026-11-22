@@ -1,0 +1,48 @@
+# Node / Vite
+node_modules/
+dist/
+*.log
+
+# Android build output
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/captures/
+*.apk
+*.aab
+
+# Signing secrets – niemals einchecken
+android/keystore.properties
+keystore.properties
+*.jks
+*.keystore
+
+# Von "npx cap sync" erzeugt (werden neu generiert)
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/app/src/main/res/xml/config.xml
+android/capacitor-cordova-android-plugins/
+
+# Weitere Signatur-/Geheimnisdateien
+*.pem
+*.p12
+*.pfx
+*.key
+.env
+.env.*
+google-services.json
+
+# IDE / OS / Tools
+.idea/
+.vscode/
+.claude/
+*.iml
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+*.hprof
+.cxx/
+.externalNativeBuild/

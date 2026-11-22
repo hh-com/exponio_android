@@ -1,0 +1,154 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-surface: #0a0a0b;
+  --color-surface-2: #141417;
+  --color-surface-3: #1e1e23;
+  --color-line: #2a2a31;
+  --color-muted: #9b9ba6;
+  --color-accent: #3b82f6;
+  --color-accent-strong: #2563eb;
+  --color-ok: #22c55e;
+  --color-warn: #f59e0b;
+  --color-danger: #ef4444;
+  --font-sans: 'Roboto', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Roboto Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+
+:root {
+  /* Capacitor SystemBars injiziert --safe-area-inset-*; env() als Fallback (WebView ≥ 140). */
+  --sat: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --sab: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --sal: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+  --sar: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+  color-scheme: dark;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  /* Transparent: hinter der WebView liegt die native Kamera-Vorschau. */
+  background: transparent;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body {
+  color: #f4f4f5;
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  touch-action: manipulation;
+}
+
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+@utility pt-safe {
+  padding-top: var(--sat);
+}
+
+@utility pb-safe {
+  padding-bottom: var(--sab);
+}
+
+@utility px-safe {
+  padding-left: max(var(--sal), 0px);
+  padding-right: max(var(--sar), 0px);
+}
+
+@utility scroll-area {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+/* Gemeinsame Formular- und Button-Optik (als Utilities, damit @apply sie kombinieren kann) */
+@utility field {
+  @apply w-full rounded-xl border border-line bg-surface-3 px-3.5 py-3 text-[15px] text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-accent;
+}
+
+@utility label {
+  @apply mb-1.5 block text-[13px] font-medium text-muted;
+}
+
+@utility card {
+  @apply rounded-2xl border border-line bg-surface-2 p-4;
+}
+
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-[15px] font-medium transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40;
+}
+
+@utility btn-primary {
+  @apply btn bg-accent text-white active:bg-accent-strong;
+}
+
+@utility btn-ghost {
+  @apply btn bg-surface-3 text-zinc-100 active:bg-line;
+}
+
+@utility btn-danger {
+  @apply btn bg-danger/15 text-red-300 active:bg-danger/25;
+}
+
+@utility chip {
+  @apply rounded-full border border-line px-3.5 py-2 text-sm font-medium text-zinc-300 transition;
+}
+
+@utility chip-active {
+  @apply border-accent bg-accent/15 text-white;
+}
+
+@keyframes shutter-flash {
+  from {
+    opacity: 0.85;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes focus-ring {
+  0% {
+    transform: translate(-50%, -50%) scale(1.4);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0;
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.animate-shutter {
+  animation: shutter-flash 260ms ease-out forwards;
+}
+
+.animate-focus {
+  animation: focus-ring 900ms ease-out forwards;
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 1.2s ease-in-out infinite;
+}
