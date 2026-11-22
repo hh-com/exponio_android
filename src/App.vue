@@ -12,7 +12,7 @@ import SettingsView from './components/SettingsView.vue'
 import UploadBar from './components/UploadBar.vue'
 import { initCameraListeners, refreshPermission, requestPermission, setCameraActive, setVolumeKeys } from './state/camera'
 import { answerHostKey, connection, hostKeyPrompt, quickCheck, refreshStoredHostKey, watchServerChanges } from './state/connection'
-import { flushDeletes, loadGroup, photos, removePhoto } from './state/group'
+import { flushDeletes, loadGroup, photos, removePhoto, rotatePhoto } from './state/group'
 import { closeLightbox, lightboxIndex, view } from './state/navigation'
 import { flushSettings, loadSettings, settings, settingsLoaded } from './state/settings'
 import { shoot } from './state/shoot'
@@ -105,8 +105,10 @@ onBeforeUnmount(() => {
     :photos="photos"
     :start-index="lightboxIndex"
     :can-delete="!isUploading"
+    :can-rotate="!isUploading"
     @close="closeLightbox"
     @delete="removePhoto"
+    @rotate="rotatePhoto"
   />
 
   <HostKeyDialog />

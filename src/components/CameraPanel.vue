@@ -11,10 +11,10 @@ import {
   setFlash,
   setZoom,
 } from '../state/camera'
-import { pendingCaptures, photos } from '../state/group'
-import { openLightbox } from '../state/navigation'
+import { pendingCaptures, photos, rotatePhoto, thumbTurnStyle } from '../state/group'
 import { settings } from '../state/settings'
 import { canShoot, shoot, shutterTick } from '../state/shoot'
+import { isUploading } from '../state/upload'
 import { isNative } from '../native/plugins'
 import type { FlashMode } from '../native/plugins'
 
@@ -169,8 +169,11 @@ const iconRotation = computed(() => {
 
 const lastPhoto = computed(() => photos.value[photos.value.length - 1] ?? null)
 
-function openLast(): void {
-  if (photos.value.length > 0) openLightbox(photos.value.length - 1)
+// Solange eine Aufnahme noch gespeichert wird, zeigt das Thumbnail das vorherige Foto → nicht drehen.
+const canRotateLast = computed(() => lastPhoto.value !== null && !isUploading.value && pendingCaptures.value === 0)
+
+function rotateLast(): void {
+  if (lastPhoto.value && canRotateLast.value) rotatePhoto(lastPhoto.value.id)
 }
 </script>
 
@@ -311,14 +314,28 @@ function openLast(): void {
       <div class="flex justify-end">
         <button
           type="button"
-          class="relative h-12 w-12 overflow-hidden rounded-xl border border-line bg-surface-3 transition active:scale-95 disabled:opacity-40"
-          :disabled="!lastPhoto"
-          aria-label="Letztes Foto ansehen"
+          class="group relative h-14 w-14 transition active:scale-95 disabled:opacity-40"
+          :disabled="!canRotateLast"
+          aria-label="Letztes Foto um 90° drehen"
           :style="{ transform: iconRotation }"
-          @click="openLast"
+          @click="rotateLast"
         >
-          <img v-if="lastPhoto" :src="lastPhoto.thumbUrl" class="h-full w-full object-cover" alt="" draggable="false" />
-          <AppIcon v-else name="image" :size="20" class="m-auto text-muted" />
+          <span class="flex h-full w-full overflow-hidden rounded-xl border border-line bg-surface-3">
+            <img
+              v-if="lastPhoto"
+              :src="lastPhoto.thumbUrl"
+              class="h-full w-full object-cover"
+              :style="thumbTurnStyle(lastPhoto.id)"
+              alt=""
+              draggable="false"
+            />
+            <AppIcon v-else name="image" :size="20" class="m-auto text-muted" />
+          </span>
+          <span
+            class="absolute -right-2 -top-2 flex h-7 w-7 items-center justify-center rounded-full border border-line bg-surface-3 text-zinc-100 shadow-md transition group-active:bg-line"
+          >
+            <AppIcon name="rotate" :size="15" :stroke="2.25" />
+          </span>
         </button>
       </div>
     </div>

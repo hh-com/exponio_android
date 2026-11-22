@@ -17,6 +17,7 @@ import kotlin.math.roundToInt
 /**
  * Komplett native Bildverarbeitung (kein WebView-Canvas):
  *  - EXIF-Ausrichtung lesen und in die Pixel "einbacken"
+ *  - Fotos verlustfrei drehen (nur EXIF-Ausrichtung ändern)
  *  - speicherschonend dekodieren (BitmapFactory.Options.inSampleSize)
  *  - auf maximale Kantenlänge verkleinern (nie vergrößern)
  *  - als WebP (lossy) oder JPEG mit wählbarer Qualität speichern
@@ -188,6 +189,30 @@ object ImageProcessor {
         return size
     }
 
+    /**
+     * Dreht ein JPEG verlustfrei, indem nur die EXIF-Ausrichtung geändert wird (keine Neukodierung).
+     * Alle Ableitungen und der Web-Export backen diese Ausrichtung später in die Pixel ein.
+     *
+     * @param degrees Drehung im Uhrzeigersinn, Vielfaches von 90
+     */
+    @Throws(IOException::class)
+    fun rotateLossless(file: File, degrees: Int) {
+        val exif = ExifInterface(file)
+        // rotate() kennt nur die 8 gültigen Werte – "undefiniert" würde die Drehung verwerfen.
+        if (exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) !in 1..8) {
+            exif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
+        }
+        exif.rotate(degrees)
+        exif.saveAttributes()
+    }
+
+    fun readOrientation(file: File): Int = try {
+        ExifInterface(file).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+    } catch (e: Exception) {
+        Log.w(TAG, "EXIF nicht lesbar (${file.name}): ${e.message}")
+        ExifInterface.ORIENTATION_NORMAL
+    }
+
     /** Liest nur den Header (Abmessungen), ohne Pixel zu dekodieren. */
     @Throws(IOException::class)
     fun decodeBounds(file: File): Size {
@@ -202,13 +227,6 @@ object ImageProcessor {
     // ------------------------------------------------------------------------------------------
     // Interna
     // ------------------------------------------------------------------------------------------
-
-    private fun readOrientation(file: File): Int = try {
-        ExifInterface(file).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
-    } catch (e: Exception) {
-        Log.w(TAG, "EXIF nicht lesbar (${file.name}): ${e.message}")
-        ExifInterface.ORIENTATION_NORMAL
-    }
 
     /** Größte Zweierpotenz, bei der die lange Kante nach dem Dekodieren noch ≥ target ist. */
     private fun sampleSizeFor(longEdge: Int, target: Int): Int {

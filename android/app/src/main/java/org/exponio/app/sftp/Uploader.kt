@@ -183,7 +183,9 @@ class Uploader(
         photoIds.forEachIndexed { index, id ->
             checkCancelled()
             emit(onProgress, Progress(PHASE_PROCESS, index + 1, total, PROCESS_WEIGHT * index / total), force = true)
-            val work = File(workDir, "${id}_${image.key}.${image.format.extension}")
+            // Ausrichtung im Namen: Wird ein Foto nach einem abgebrochenen Upload gedreht, gilt der Zwischenstand nicht mehr.
+            val orientation = ImageProcessor.readOrientation(store.originalFile(id))
+            val work = File(workDir, "${id}_o${orientation}_${image.key}.${image.format.extension}")
             if (!work.isFile || work.length() == 0L) {
                 try {
                     ImageProcessor.processForWeb(

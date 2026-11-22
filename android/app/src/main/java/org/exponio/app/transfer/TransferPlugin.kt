@@ -82,6 +82,25 @@ class TransferPlugin : Plugin() {
         }
     }
 
+    @PluginMethod
+    fun rotatePhoto(call: PluginCall) {
+        if (uploadRunning.get()) {
+            call.reject("Während des Uploads kann nichts gedreht werden.", ErrorCode.BUSY)
+            return
+        }
+        val id = call.getString("id").orEmpty()
+        val quarterTurns = call.getInt("quarterTurns", 1) ?: 1
+        ioExecutor.execute {
+            try {
+                call.resolve(PluginJson.photo(store.rotate(id, quarterTurns)))
+            } catch (e: OutOfMemoryError) {
+                call.reject("Zu wenig Arbeitsspeicher zum Drehen.", "IO_ERROR")
+            } catch (e: Exception) {
+                call.reject("Foto konnte nicht gedreht werden: ${e.message}", "IO_ERROR")
+            }
+        }
+    }
+
     // ------------------------------------------------------------------------------------------
     // Zugangsdaten (write-only aus Sicht der WebView)
     // ------------------------------------------------------------------------------------------

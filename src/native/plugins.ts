@@ -12,6 +12,8 @@ export interface NativePhoto {
   thumb: string
   width: number
   height: number
+  /** Ändert sich, wenn Vorschau/Thumbnail neu erzeugt wurden (z. B. nach dem Drehen). */
+  version: number
 }
 
 export type FlashMode = 'off' | 'on' | 'auto'
@@ -126,6 +128,8 @@ export interface PtCameraPlugin {
 export interface PtTransferPlugin {
   listPhotos(): Promise<{ photos: NativePhoto[] }>
   deletePhotos(options: { ids: string[] }): Promise<void>
+  /** Verlustfrei im Uhrzeigersinn drehen (Vierteldrehungen à 90°). */
+  rotatePhoto(options: { id: string; quarterTurns: number }): Promise<NativePhoto>
   setSecret(options: { name: SecretName; value: string | null }): Promise<SecretStatus>
   getSecretStatus(): Promise<SecretStatus>
   getHostKey(options: { host: string; port: number }): Promise<{ fingerprint?: string; keyType?: string }>

@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
  * die Gruppe soll App-Neustarts und Abstürze überleben, bis der Upload verifiziert ist.
  *
  * Struktur:
- *   files/group/incoming/<id>.jpg  – CameraX schreibt hierhin (unvollständig bis commit)
+ *   files/group/incoming/<id>.jpg  – CameraX schreibt hierhin (unvollständig bis commit), dazu Arbeitskopien beim Drehen
  *   files/group/photos/<id>.jpg    – Originale (Quelle der Wahrheit, Reihenfolge = Dateiname)
  *   files/group/previews/<id>.jpg  – Lightbox-Vorschau (~2000 px, gedreht)
  *   files/group/thumbs/<id>.jpg    – Raster-Thumbnail (~360 px, gedreht)
@@ -87,6 +87,37 @@ class PhotoStore private constructor(context: Context) {
         }
         sizeCache[id] = size
         return Photo(id, original, previewFile(id), thumbFile(id), size.width, size.height)
+    }
+
+    /**
+     * Dreht ein Foto verlustfrei um Vielfache von 90° im Uhrzeigersinn (nur EXIF-Ausrichtung des Originals)
+     * und baut Vorschau + Thumbnail neu. Der Web-Export liest dieselbe Ausrichtung → kommt gedreht an.
+     */
+    @Synchronized
+    @Throws(IOException::class)
+    fun rotate(id: String, quarterTurns: Int): Photo {
+        requireValidId(id)
+        val original = originalFile(id)
+        if (!original.isFile) throw IOException("Foto existiert nicht mehr")
+        val turns = Math.floorMod(quarterTurns, 4)
+        if (turns == 0) return photo(id)
+
+        // Auf einer Kopie arbeiten und atomar ersetzen: Ein Abbruch mittendrin lässt das Original intakt.
+        // incoming/ wird beim Start geleert, verwaiste Kopien verschwinden also von selbst.
+        val tmp = File(incomingDir, "$id.rotate.jpg")
+        try {
+            original.copyTo(tmp, overwrite = true)
+            ImageProcessor.rotateLossless(tmp, turns * 90)
+            ImageProcessor.decodeBounds(tmp)
+            // Alte Ableitungen vorher entfernen: Bricht es danach ab, baut photo() sie passend zum Original neu.
+            previewFile(id).delete()
+            thumbFile(id).delete()
+            sizeCache.remove(id)
+            if (!tmp.renameTo(original)) throw IOException("Gedrehtes Foto konnte nicht gespeichert werden")
+        } finally {
+            tmp.delete()
+        }
+        return photo(id)
     }
 
     /** Alle Fotos der Gruppe in Aufnahme-Reihenfolge. Fehlende Ableitungen werden nachgebaut. */

@@ -157,7 +157,9 @@ TLS-Sitzung der Steuerverbindung wiederverwendet. Das erledigt Bouncy Castle JSS
    mit zwei Fingern wird gezoomt, die Zoom-Stufen 0,5× / 1× / 2× / 5× sind direkt anwählbar.
 3. **Prüfen:** Thumbnail antippen → Lightbox mit Pinch-to-Zoom, Doppeltipp-Zoom, Verschieben, Wischen,
    Herunterziehen zum Schließen. Löschen per ✕ im Raster oder Papierkorb in der Lightbox
-   (5 s lang „Rückgängig“ möglich).
+   (5 s lang „Rückgängig“ möglich). **Drehen** um 90° im Uhrzeigersinn: das zuletzt aufgenommene Foto über das
+   Thumbnail rechts neben dem Auslöser, jedes andere über den Drehen-Knopf in der Lightbox. Das Drehen ist
+   verlustfrei (nur EXIF-Ausrichtung des Originals), das Foto kommt gedreht auf dem Server an.
 4. **Hochladen:** „N Fotos hochladen“.
 
 ### Was beim Upload passiert

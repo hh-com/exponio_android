@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
-import { pendingCaptures, photos, removePhoto } from '../state/group'
+import { pendingCaptures, photos, removePhoto, thumbTurnStyle } from '../state/group'
 import { openLightbox } from '../state/navigation'
 import { isUploading } from '../state/upload'
 
@@ -59,6 +59,7 @@ watch(
             <img
               :src="photo.thumbUrl"
               class="h-full w-full object-cover"
+              :style="thumbTurnStyle(photo.id)"
               alt=""
               draggable="false"
               decoding="async"

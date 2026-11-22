@@ -2,7 +2,7 @@ import { computed, reactive } from 'vue'
 import { PtTransfer, isNative, toNativeError } from '../native/plugins'
 import type { NativeError, UploadProgress, UploadResult, UploadState } from '../native/plugins'
 import { connection } from './connection'
-import { flushDeletes, loadGroup, photos } from './group'
+import { flushDeletes, loadGroup, photos, settleRotations } from './group'
 import { imagePayload, serverPayload } from './settings'
 import { setVolumeKeys } from './camera'
 import { showToast } from './toast'
@@ -49,6 +49,7 @@ export async function startUpload(): Promise<void> {
   if (upload.status === 'running') return
   window.clearTimeout(doneTimer)
   await flushDeletes()
+  await settleRotations()
 
   const ids = photos.value.map((p) => p.id)
   if (ids.length === 0) return

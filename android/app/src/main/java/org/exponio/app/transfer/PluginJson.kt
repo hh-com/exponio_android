@@ -15,6 +15,8 @@ object PluginJson {
         json.put("thumb", photo.thumb.absolutePath)
         json.put("width", photo.width)
         json.put("height", photo.height)
+        // Ändert sich beim Neuaufbau der Ableitungen (z. B. nach dem Drehen) → WebView lädt neu statt aus dem Cache.
+        json.put("version", photo.thumb.lastModified())
         return json
     }
 

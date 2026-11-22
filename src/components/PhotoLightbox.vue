@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
+import { rotationOf } from '../state/group'
 import type { Photo } from '../state/group'
 
-const props = defineProps<{ photos: Photo[]; startIndex: number; canDelete: boolean }>()
-const emit = defineEmits<{ close: []; delete: [id: string] }>()
+const props = defineProps<{ photos: Photo[]; startIndex: number; canDelete: boolean; canRotate: boolean }>()
+const emit = defineEmits<{ close: []; delete: [id: string]; rotate: [id: string] }>()
 
 const GAP = 16
 const MAX_SCALE = 5
@@ -57,14 +58,22 @@ watch(index, () => {
 
 // ---- Geometrie -------------------------------------------------------------------------------
 
-function fitSize(photo: Photo | undefined): { w: number; h: number } {
+/** Eingepasste Größe; bei ungerader Zahl ausstehender Vierteldrehungen mit vertauschten Seiten. */
+function fitSize(photo: Photo | undefined, turns = 0): { w: number; h: number } {
   if (!photo) return { w: width.value, h: height.value }
-  const r = Math.min(width.value / photo.width, height.value / photo.height)
-  return { w: photo.width * r, h: photo.height * r }
+  const odd = turns % 2 === 1
+  const pw = odd ? photo.height : photo.width
+  const ph = odd ? photo.width : photo.height
+  const r = Math.min(width.value / pw, height.value / ph)
+  return { w: pw * r, h: ph * r }
+}
+
+function turnsOf(photo: Photo | undefined): number {
+  return photo ? rotationOf(photo.id).turns : 0
 }
 
 function bounds(s: number): { maxX: number; maxY: number } {
-  const { w, h } = fitSize(current.value)
+  const { w, h } = fitSize(current.value, turnsOf(current.value))
   return {
     maxX: Math.max(0, (w * s - width.value) / 2),
     maxY: Math.max(0, (h * s - height.value) / 2),
@@ -332,13 +341,16 @@ function imageStyle(slide: { photo: Photo; i: number }): Record<string, string> 
   const s = isCurrent ? scale.value : 1
   const x = isCurrent ? tx.value : 0
   const y = isCurrent ? ty.value : 0
+  // Noch nicht gespeicherte Drehung per CSS vorwegnehmen und das gedrehte Bild neu einpassen.
+  const { turns, animate } = rotationOf(slide.photo.id)
+  const fit = turns % 2 === 1 ? fitSize(slide.photo, turns).w / h : 1
   return {
     width: `${w}px`,
     height: `${h}px`,
     left: `${(width.value - w) / 2}px`,
     top: `${(height.value - h) / 2}px`,
-    transform: `translate3d(${x}px, ${y}px, 0) scale(${s})`,
-    transition: transition.value,
+    transform: `translate3d(${x}px, ${y}px, 0) scale(${s * fit}) rotate(${turns * 90}deg)`,
+    transition: animate ? transition.value : 'none',
   }
 }
 
@@ -347,6 +359,13 @@ const stageStyle = computed(() => ({
   transform: `translate3d(0, ${dismissY.value}px, 0)`,
   transition: transition.value,
 }))
+
+function onRotate(): void {
+  const photo = current.value
+  if (!photo || !props.canRotate) return
+  resetZoom(true)
+  emit('rotate', photo.id)
+}
 
 function onDelete(): void {
   const photo = current.value
@@ -421,15 +440,26 @@ onBeforeUnmount(() => {
         <span class="rounded-full bg-black/40 px-3 py-1 text-[15px] font-semibold tabular-nums text-white">
           {{ index + 1 }} / {{ total }}
         </span>
-        <button
-          type="button"
-          class="flex h-12 w-12 items-center justify-center rounded-full text-white active:bg-danger/40 disabled:opacity-30"
-          :disabled="!canDelete"
-          aria-label="Foto löschen"
-          @click="onDelete"
-        >
-          <AppIcon name="trash" :size="22" />
-        </button>
+        <div class="flex items-center">
+          <button
+            type="button"
+            class="flex h-12 w-12 items-center justify-center rounded-full text-white active:bg-white/15 disabled:opacity-30"
+            :disabled="!canRotate"
+            aria-label="Foto um 90° drehen"
+            @click="onRotate"
+          >
+            <AppIcon name="rotate" :size="22" />
+          </button>
+          <button
+            type="button"
+            class="flex h-12 w-12 items-center justify-center rounded-full text-white active:bg-danger/40 disabled:opacity-30"
+            :disabled="!canDelete"
+            aria-label="Foto löschen"
+            @click="onDelete"
+          >
+            <AppIcon name="trash" :size="22" />
+          </button>
+        </div>
       </div>
     </div>
 
