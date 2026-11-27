@@ -2,13 +2,13 @@
 
 Minimale Sideloading-App für Produktfotos: **Aufnehmen → Prüfen → Hochladen**.
 Fotos werden in Gruppen mit der In-App-Kamera aufgenommen, im 4er-Raster und in einer Lightbox geprüft,
-nativ web-optimiert (WebP/JPEG) und per **FTPS** (z. B. Webhosting) oder **SFTP** in einen neuen Ordner
-mit Zeitstempel hochgeladen.
+nativ web-optimiert (WebP/JPEG) und über **HTTPS direkt in die Exponio-Website** hochgeladen. Die Website legt
+jede Gruppe als neuen Ordner mit Zeitstempel ab und importiert sie.
 
 - **Stack:** Vue 3 (`<script setup>`, TypeScript), Vite, Tailwind CSS 4, Capacitor 8
 - **Android:** compileSdk/targetSdk 36 (Android 16), minSdk 35 (Android 15) – getestet für Pixel 10
-- **Nativ (Kotlin):** CameraX, Bildverarbeitung (BitmapFactory/ExifInterface), SFTP via `com.github.mwiede:jsch`,
-  FTPS via `commons-net` + Bouncy Castle JSSE
+- **Nativ (Kotlin):** CameraX, Bildverarbeitung (BitmapFactory/ExifInterface), Upload per `HttpsURLConnection`
+  an die Schnittstelle der Website (keine weitere Netzwerk-Bibliothek)
 
 ---
 
@@ -114,45 +114,32 @@ Für jedes Update `versionCode` (und `versionName`) in `android/app/build.gradle
 
 ---
 
-## 4. Server vorbereiten
+## 4. Website verbinden
 
-Uploads landen immer im **Startverzeichnis des Zugangs** (dort, wo der Benutzer nach dem Login steht).
-Den Zugang also so anlegen, dass er direkt im gewünschten Upload-Ordner startet.
+Die App lädt direkt in die **Exponio-Website** hoch (`../exponio_website`). Sie kennt nur deren Adresse und ein
+Token; in welchen Ordner die Fotos auf dem Server kommen, entscheidet die Website (`SCAN_DIR`, Standard
+`app_uploads/` neben dem Projektordner). FTP-/SSH-Zugänge braucht es dafür nicht.
 
-### FTPS (Webhosting)
+1. Im Backend der Website **System → App-Zugänge → Neuer App-Zugang** öffnen, das Gerät benennen (z. B. „Pixel 10“)
+   und „Token erzeugen“ tippen. Die Seite zeigt danach **Website-Adresse** und **Token** zum Kopieren, das Token nur
+   dieses eine Mal. Am einfachsten öffnest du das Backend dafür direkt auf dem Handy.
+2. In der App unter **Einstellungen → Website** beides einfügen und **„Verbindung testen“** tippen.
+3. Ein verlorenes Gerät sperrst du, indem du seinen App-Zugang im Backend löschst.
 
-1. Im Hosting-Kundenmenü einen zusätzlichen FTP-Benutzer anlegen, dessen Verzeichnis der Upload-Ordner ist.
-2. In der App als **Host den Servernamen aus dem Zertifikat** eintragen, z. B. `ftp.example.com`, nicht die IP.
-   Das Zertifikat wird wie im Browser geprüft (System-CAs + Hostname). Den Namen zeigt z. B.
-   `openssl s_client -starttls ftp -connect <IP>:21 </dev/null | grep subject`.
-3. Port 21, Anmeldung per Passwort (explizites TLS, „FTP über TLS“).
-
-Technik: Steuer- und Datenverbindung sind immer verschlüsselt (`AUTH TLS`, `PROT P`), es gibt keinen
-Klartext-Fallback. Viele Server (ProFTPD-Standard) verlangen, dass die Datenverbindung die
-TLS-Sitzung der Steuerverbindung wiederverwendet. Das erledigt Bouncy Castle JSSE. Dafür wird **TLS 1.2**
-(ECDHE + AES-GCM) verwendet, weil Bouncy Castle TLS-1.3-Sitzungen dafür nicht fortsetzen kann.
-
-### SFTP (eigener Server)
-
-1. SFTP-Benutzer mit Schreibrechten in seinem Startverzeichnis. Upload-Benutzer ohne Shell brauchen in
-   `sshd_config` `ForceCommand internal-sftp` (sonst „SFTP abgelehnt“).
-2. Fingerprint des Servers zum Abgleich beim ersten Verbinden anzeigen:
-   ```bash
-   ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
-   ```
-3. Für Key-Login den öffentlichen Schlüssel in `~/.ssh/authorized_keys` des Upload-Benutzers eintragen.
-   Unterstützt werden Ed25519, ECDSA und RSA (OpenSSH- oder PEM-Format, optional mit Passphrase).
+Technik: nur HTTPS mit gültigem Zertifikat (System-CAs, wie im Browser), `Authorization: Bearer <Token>`.
+Weiterleitungen folgt die App nicht, damit das Token nie an eine andere Adresse geht. Leitet die Adresse weiter
+(z. B. von `www.` auf ohne), nennt der Verbindungstest das Ziel. Das Token liegt AES-GCM-verschlüsselt mit einem
+Schlüssel aus dem Android-Keystore auf dem Gerät; die WebView kann es setzen, aber nie zurücklesen. Auf der Website
+ist nur sein SHA-256-Hash gespeichert. Die Schnittstelle selbst beschreibt `exponio_website/README.md`
+(Abschnitt „App-Zugang“).
 
 ---
 
 ## 5. Bedienung
 
-1. **Einstellungen** (Regler-Symbol oben rechts): Protokoll (FTPS/SFTP), Host, Port, Benutzer und Passwort
-   (bei SFTP alternativ Private Key) eintragen und **„Verbindung testen“** tippen. Der Test prüft auch die
-   Schreibrechte: Er legt kurz einen Testordner mit einer kleinen Datei an und entfernt beides wieder.
-   Nur SFTP: Beim ersten Kontakt wird der Host-Key-Fingerprint angezeigt. Nach „Vertrauen“ wird er gespeichert
-   und bei jeder Verbindung geprüft (TOFU). Ändert er sich später, sind Uploads gesperrt, bis du ihn in den
-   Einstellungen bewusst zurücksetzt.
+1. **Einstellungen** (Regler-Symbol oben rechts) → **Website**: Adresse und Token eintragen (siehe Abschnitt 4)
+   und **„Verbindung testen“** tippen. Der Test prüft Zertifikat und Token, und die Website legt in ihrem
+   Upload-Ordner kurz einen Testordner an und entfernt ihn wieder (Schreibrechte).
 2. **Aufnehmen:** Auslöser oder Lautstärketaste, beliebig oft hintereinander. Tippen auf die Vorschau fokussiert,
    mit zwei Fingern wird gezoomt, die Zoom-Stufen 0,5× / 1× / 2× / 5× sind direkt anwählbar.
 3. **Prüfen:** Thumbnail antippen → Lightbox mit Pinch-to-Zoom, Doppeltipp-Zoom, Verschieben, Wischen,
@@ -170,14 +157,23 @@ TLS-Sitzung der Steuerverbindung wiederverwendet. Das erledigt Bouncy Castle JSS
 1. Alle Fotos werden **nativ** optimiert: EXIF-Ausrichtung in die Pixel übernehmen, mit `inSampleSize`
    speicherschonend dekodieren, auf die maximale Kantenlänge verkleinern (nie vergrößern) und als WebP/JPEG
    mit der eingestellten Qualität speichern. EXIF-Metadaten werden auf Wunsch übernommen (Orientation = normal).
-2. Im Startverzeichnis des Zugangs entsteht `_tmp_2026-11-20_211530/`.
-3. Upload als `01.webp`, `02.webp`, … Jede Datei wird auf dem Server auf die exakte Größe geprüft.
-   Gibt es eine Notiz, folgt sie als `info.txt` (UTF-8, Zeilenenden `\n`). Ohne Notiz fehlt die Datei.
-4. Nach Prüfung des vollständigen Ordnerinhalts folgt ein **atomares Umbenennen** in `2026-11-20_211530`
-   (bei Namenskollision `…_2`). Ein unvollständiger Produktordner taucht so nie unter regulärem Namen auf.
-5. Erst danach wird die lokale Gruppe (Fotos und Notiz) geleert. Auf dem Server wird nie etwas außerhalb des eigenen `_tmp_`-Ordners
-   gelöscht oder überschrieben.
+2. Die App fragt die Website, ob Token und Upload-Ordner in Ordnung sind, und was von diesem Upload schon auf dem
+   Server liegt (nach einem Abbruch).
+3. Upload als `01.webp`, `02.webp`, …, jede Datei mit SHA-256-Prüfsumme. Die Website prüft Größe, Prüfsumme und
+   Bildformat und legt sie in `_tmp_2026-11-20_211530/` im Upload-Ordner ab. Gibt es eine Notiz, folgt sie als
+   `info.txt` (UTF-8, Zeilenenden `\n`). Ohne Notiz fehlt die Datei.
+4. Zum Abschluss schickt die App die vollständige Dateiliste. Die Website prüft den Ordnerinhalt dagegen und
+   benennt ihn **atomar** in `2026-11-20_211530` um (bei Namenskollision `…_2`). Ein unvollständiger Ordner taucht
+   so nie unter regulärem Namen auf, und der Import der Website (`app:scan`) sieht ihn erst danach.
+5. Erst danach wird die lokale Gruppe (Fotos und Notiz) geleert. Auf dem Server wird nie etwas außerhalb des
+   eigenen `_tmp_`-Ordners gelöscht oder überschrieben.
 
-Bricht die Verbindung ab, bleiben alle Fotos lokal erhalten. „Erneut versuchen“ setzt im selben `_tmp_`-Ordner
-fort und überspringt bereits verifizierte Dateien, auch nach einem Neustart der App. Während des Uploads bleibt
-das Display an (`FLAG_KEEP_SCREEN_ON`).
+Bricht die Verbindung ab, bleiben alle Fotos lokal erhalten. „Erneut versuchen“ setzt mit demselben Zeitstempel
+fort und sendet nur, was auf dem Server fehlt oder abweicht, auch nach einem Neustart der App. Ging nur die
+Bestätigung des Abschlusses verloren, erkennt die Website den fertigen Ordner wieder, statt einen zweiten
+anzulegen. Während des Uploads bleibt das Display an (`FLAG_KEEP_SCREEN_ON`).
+
+> **Update von einer Version mit SFTP/FTPS:** Gespeicherte Server-Zugangsdaten (Passwort, Private Key, Host-Keys)
+> löscht die App beim ersten Start. Ein unterbrochener SFTP/FTPS-Upload wird nicht fortgesetzt; die Fotos liegen
+> noch auf dem Gerät und gehen beim nächsten Upload an die Website. Auf dem alten Server bleibt höchstens ein
+> `_tmp_…`-Ordner zurück, den der Import ignoriert.

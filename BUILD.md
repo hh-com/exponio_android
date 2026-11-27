@@ -27,7 +27,7 @@ Die App besteht aus zwei Teilen, die zusammen in **eine APK** gepackt werden:
 | Teil | Ort | Sprache | Wird zu |
 |---|---|---|---|
 | Oberfläche (UI) | `src/` | Vue 3 + TypeScript + Tailwind | `dist/` (Vite-Build) |
-| Native Funktionen (Kamera, Bildverarbeitung, FTPS/SFTP, Verschlüsselung) | `android/app/src/main/java/org/exponio/app/` | Kotlin | Teil der APK |
+| Native Funktionen (Kamera, Bildverarbeitung, Upload an die Website, Verschlüsselung) | `android/app/src/main/java/org/exponio/app/` | Kotlin | Teil der APK |
 | Android-Konfiguration | `android/app/build.gradle`, `AndroidManifest.xml`, `res/` | Gradle/XML | Teil der APK |
 | Capacitor-Konfiguration | `capacitor.config.ts` | TypeScript | `android/app/src/main/assets/capacitor.config.json` (generiert) |
 
@@ -311,7 +311,7 @@ Versionen sind bewusst **exakt gepinnt** (keine `^`/`~`), damit Builds reproduzi
 |---|---|---|
 | Capacitor (`@capacitor/*`) | `package.json` | Alle Capacitor-Pakete auf dieselbe Hauptversion bringen, danach `npm install && npx cap sync android` |
 | Vue, Vite, Tailwind, TypeScript | `package.json` | danach `npm run build` (Typecheck!) |
-| CameraX, JSch, Bouncy Castle, commons-net, ExifInterface | `android/app/build.gradle` | Bouncy Castle (`bcprov`/`bctls`) immer **gleiche Version** |
+| CameraX, ExifInterface | `android/app/build.gradle` | CameraX-Module über `cameraxVersion` gemeinsam anheben |
 | Android Gradle Plugin / Kotlin | `android/build.gradle` | AGP 8.13 braucht Gradle 8.14 und JDK 17–21 |
 | Gradle | `android/gradle/wrapper/gradle-wrapper.properties` | `cd android && ./gradlew wrapper --gradle-version <x>` |
 | compileSdk / targetSdk / minSdk | `android/variables.gradle` | Beim Anheben passende SDK-Platform installieren (`sdkmanager "platforms;android-NN"`) |

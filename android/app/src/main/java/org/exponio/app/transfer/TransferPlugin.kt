@@ -7,37 +7,29 @@ import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
-import org.exponio.app.ftps.FtpsConnector
+import org.exponio.app.api.ApiClient
+import org.exponio.app.api.ServerConfig
 import org.exponio.app.image.ImageProcessor
-import org.exponio.app.remote.RemoteConnector
-import org.exponio.app.remote.RemotePath
 import org.exponio.app.security.SecretStore
-import org.exponio.app.sftp.ErrorCode
-import org.exponio.app.sftp.HostKeyStore
-import org.exponio.app.sftp.ServerConfig
-import org.exponio.app.sftp.SftpConnector
-import org.exponio.app.sftp.TransferException
-import org.exponio.app.sftp.Uploader
 import org.exponio.app.store.PhotoStore
+import org.exponio.app.upload.Uploader
 import org.json.JSONObject
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Brücke zwischen Web-UI und nativer Logik: Gruppenverwaltung, Zugangsdaten, Host-Keys (SFTP),
- * Verbindungstest und Upload (SFTP oder FTPS). Netzwerk & Bildverarbeitung laufen auf eigenen Threads,
- * damit der Capacitor-Plugin-Thread (und damit z. B. cancelUpload) nie blockiert.
+ * Brücke zwischen Web-UI und nativer Logik: Gruppenverwaltung, Notiz, Token, Verbindungstest und Upload an die
+ * Exponio-Website. Netzwerk & Bildverarbeitung laufen auf eigenen Threads, damit der Capacitor-Plugin-Thread
+ * (und damit z. B. cancelUpload) nie blockiert.
  */
 @CapacitorPlugin(name = "PtTransfer")
 class TransferPlugin : Plugin() {
 
     private lateinit var store: PhotoStore
     private lateinit var secrets: SecretStore
-    private lateinit var hostKeys: HostKeyStore
-    private lateinit var connector: SftpConnector
-    private lateinit var remote: RemoteConnector
     private lateinit var uploader: Uploader
+    private lateinit var userAgent: String
 
     private val ioExecutor: ExecutorService = Executors.newSingleThreadExecutor { r -> Thread(r, "pt-io") }
     private val networkExecutor: ExecutorService = Executors.newCachedThreadPool { r -> Thread(r, "pt-net") }
@@ -46,10 +38,15 @@ class TransferPlugin : Plugin() {
     override fun load() {
         store = PhotoStore.get(context)
         secrets = SecretStore.get(context)
-        hostKeys = HostKeyStore.get(context)
-        connector = SftpConnector(secrets, hostKeys)
-        remote = RemoteConnector(connector, FtpsConnector(), secrets)
-        uploader = Uploader(context, remote, store)
+        val version = try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        } catch (_: Exception) {
+            null
+        }
+        userAgent = "Exponio-App/${version ?: "?"} (Android)"
+        uploader = Uploader(context, store, userAgent)
+        // Vertraute SSH-Host-Keys früherer Versionen (SFTP) werden nicht mehr gebraucht.
+        ioExecutor.execute { context.deleteSharedPreferences(LEGACY_HOST_KEYS) }
     }
 
     // ------------------------------------------------------------------------------------------
@@ -126,7 +123,7 @@ class TransferPlugin : Plugin() {
     }
 
     // ------------------------------------------------------------------------------------------
-    // Zugangsdaten (write-only aus Sicht der WebView)
+    // Token (write-only aus Sicht der WebView)
     // ------------------------------------------------------------------------------------------
 
     @PluginMethod
@@ -136,17 +133,19 @@ class TransferPlugin : Plugin() {
             call.reject("Unbekanntes Secret.", "INVALID_ARGUMENT")
             return
         }
-        val value = call.getString("value")?.let { if (name == SecretStore.PRIVATE_KEY) normalizeKey(it) else it }
+        // Beim Kopieren aus Browser oder Messenger rutschen gern Leerzeichen und Zeilenumbrüche mit.
+        val value = call.getString("value")?.filterNot { it.isWhitespace() }?.takeIf { it.isNotEmpty() }
+        if (value != null && !TOKEN_PATTERN.matches(value)) {
+            call.reject(
+                "Das ist kein Exponio-Token. Es beginnt mit „exp_“ und steht nach dem Anlegen eines App-Zugangs im Backend der Website.",
+                ErrorCode.TOKEN_INVALID,
+            )
+            return
+        }
         ioExecutor.execute {
             try {
-                if (name == SecretStore.PRIVATE_KEY && !value.isNullOrBlank()) {
-                    // Vor dem Speichern prüfen, ob JSch den Key lesen kann.
-                    connector.inspectKey(value, null)
-                }
-                secrets.put(name, value?.takeIf { it.isNotEmpty() })
+                secrets.put(name, value)
                 call.resolve(secretStatus())
-            } catch (e: TransferException) {
-                reject(call, e)
             } catch (e: Exception) {
                 call.reject("Speichern fehlgeschlagen: ${e.message}", "IO_ERROR")
             }
@@ -164,48 +163,13 @@ class TransferPlugin : Plugin() {
         }
     }
 
+    /** Ob ein Token gespeichert ist und seine letzten vier Zeichen – so zeigt sie auch das Backend der Website. */
     private fun secretStatus(): JSObject {
         val result = JSObject()
-        result.put("password", secrets.has(SecretStore.PASSWORD))
-        result.put("passphrase", secrets.has(SecretStore.PASSPHRASE))
-        val key = secrets.get(SecretStore.PRIVATE_KEY)
-        result.put("privateKey", key != null)
-        if (key != null) {
-            try {
-                val info = connector.inspectKey(key, secrets.get(SecretStore.PASSPHRASE))
-                result.put("keyType", info.type)
-                result.put("keyEncrypted", info.encrypted)
-                if (info.passphraseOk != null) result.put("passphraseOk", info.passphraseOk)
-            } catch (e: TransferException) {
-                result.put("keyError", e.message)
-            }
-        }
+        val token = secrets.get(SecretStore.TOKEN)
+        result.put("token", token != null)
+        if (token != null) result.put("tokenHint", token.takeLast(4))
         return result
-    }
-
-    // ------------------------------------------------------------------------------------------
-    // Host-Keys (TOFU)
-    // ------------------------------------------------------------------------------------------
-
-    @PluginMethod
-    fun getHostKey(call: PluginCall) {
-        val host = call.getString("host").orEmpty()
-        val port = call.getInt("port", 22) ?: 22
-        val stored = if (host.isBlank()) null else hostKeys.get(host, port)
-        val result = JSObject()
-        if (stored != null) {
-            result.put("fingerprint", stored.fingerprint)
-            result.put("keyType", stored.type)
-        }
-        call.resolve(result)
-    }
-
-    @PluginMethod
-    fun resetHostKey(call: PluginCall) {
-        val host = call.getString("host").orEmpty()
-        val port = call.getInt("port", 22) ?: 22
-        if (host.isNotBlank()) hostKeys.remove(host, port)
-        call.resolve()
     }
 
     // ------------------------------------------------------------------------------------------
@@ -214,28 +178,26 @@ class TransferPlugin : Plugin() {
 
     @PluginMethod
     fun testConnection(call: PluginCall) {
-        val cfg = try {
-            serverConfig(call)
+        val cfg: ServerConfig
+        val token: String
+        try {
+            cfg = serverConfig(call)
+            token = token()
         } catch (e: TransferException) {
             reject(call, e)
             return
         }
-        val trust = call.getString("trustFingerprint")?.takeIf { it.isNotBlank() }
         val writeTest = call.getBoolean("writeTest", true) ?: true
         networkExecutor.execute {
             try {
-                remote.open(cfg, trust).use { fs ->
-                    remote.checkBasePath(fs, RemotePath.normalizeBase(cfg.basePath), writeTest)
-                    val result = JSObject()
-                    result.put("ok", true)
-                    result.put("protocol", cfg.protocol.id)
-                    result.put("serverVersion", fs.serverInfo)
-                    result.put("fingerprint", fs.hostKeyFingerprint ?: "")
-                    result.put("keyType", fs.hostKeyType ?: "")
-                    result.put("newlyTrusted", fs.newlyTrusted)
-                    result.put("writeTested", writeTest)
-                    call.resolve(result)
-                }
+                val status = ApiClient(cfg, token, userAgent).status(writeTest)
+                val result = JSObject()
+                result.put("ok", true)
+                result.put("url", cfg.baseUrl)
+                result.put("site", status.site)
+                result.put("api", status.api)
+                result.put("writeTested", status.writeTested)
+                call.resolve(result)
             } catch (e: TransferException) {
                 reject(call, e)
             } catch (e: Exception) {
@@ -250,8 +212,11 @@ class TransferPlugin : Plugin() {
 
     @PluginMethod
     fun upload(call: PluginCall) {
-        val cfg = try {
-            serverConfig(call)
+        val cfg: ServerConfig
+        val token: String
+        try {
+            cfg = serverConfig(call)
+            token = token()
         } catch (e: TransferException) {
             reject(call, e)
             return
@@ -266,7 +231,7 @@ class TransferPlugin : Plugin() {
         setKeepScreenOn(true)
         networkExecutor.execute {
             try {
-                val result = uploader.run(cfg, image, ids) { progress ->
+                val result = uploader.run(cfg, token, image, ids) { progress ->
                     notifyListeners("uploadProgress", PluginJson.progress(progress))
                 }
                 val json = JSObject()
@@ -302,9 +267,8 @@ class TransferPlugin : Plugin() {
                 result.put("pending", true)
                 result.put("dirName", job.dirName)
                 result.put("total", job.photoIds.size)
-                result.put("uploaded", job.uploaded.size)
+                result.put("uploaded", job.uploaded.count { it != Uploader.NOTE_FILE_NAME })
                 result.put("host", job.host)
-                result.put("basePath", job.basePath)
             } else {
                 result.put("pending", false)
             }
@@ -336,23 +300,13 @@ class TransferPlugin : Plugin() {
     @Throws(TransferException::class)
     private fun serverConfig(call: PluginCall): ServerConfig {
         val server = call.getObject("server")
-            ?: throw TransferException(ErrorCode.NOT_CONFIGURED, "Server-Einstellungen fehlen.")
-        val protocol = ServerConfig.Protocol.parse(server.getString("protocol"))
-        val host = server.getString("host").orEmpty().trim()
-        val username = server.getString("username").orEmpty().trim()
-        val port = server.getInteger("port", protocol.defaultPort) ?: protocol.defaultPort
-        // FTPS kennt nur Passwort-Anmeldung.
-        val auth = if (protocol == ServerConfig.Protocol.SFTP && server.getString("auth") == "key") {
-            ServerConfig.AuthMethod.KEY
-        } else {
-            ServerConfig.AuthMethod.PASSWORD
-        }
-        val basePath = server.getString("basePath").orEmpty()
-        if (host.isEmpty() || username.isEmpty()) {
-            throw TransferException(ErrorCode.NOT_CONFIGURED, "Server-Adresse und Benutzername müssen eingetragen sein.")
-        }
-        return ServerConfig(host, port, username, auth, basePath, protocol)
+            ?: throw TransferException(ErrorCode.NOT_CONFIGURED, "Die Adresse der Website fehlt.")
+        return ServerConfig.parse(server.getString("url"))
     }
+
+    @Throws(TransferException::class)
+    private fun token(): String = secrets.get(SecretStore.TOKEN)
+        ?: throw TransferException(ErrorCode.NO_CREDENTIALS, "Es ist noch kein Token gespeichert (Einstellungen → Website).")
 
     private fun imageSettings(json: JSObject): Uploader.ImageSettings {
         val maxEdge = (json.getInteger("maxEdge", 1600) ?: 1600).coerceIn(200, 10000)
@@ -367,15 +321,16 @@ class TransferPlugin : Plugin() {
         return (0 until array.length()).mapNotNull { i -> array.optString(i, null)?.takeIf { it.isNotEmpty() } }
     }
 
-    /** Zeilenumbrüche vereinheitlichen und Whitespace trimmen (häufig beim Einfügen aus Messengern). */
-    private fun normalizeKey(raw: String): String {
-        val text = raw.replace("\r\n", "\n").replace('\r', '\n').trim()
-        return if (text.isEmpty()) text else text + "\n"
-    }
-
     private fun reject(call: PluginCall, e: TransferException) {
         val data = JSObject()
         e.details.forEach { (k, v) -> data.put(k, v ?: JSONObject.NULL) }
         call.reject(e.message ?: e.code, e.code, null, data)
+    }
+
+    private companion object {
+        const val LEGACY_HOST_KEYS = "pt_host_keys"
+
+        /** Format der Website: "exp_" + 43 Zeichen Base64url (App\Entity\AppToken) */
+        val TOKEN_PATTERN = Regex("^exp_[A-Za-z0-9_-]{20,200}$")
     }
 }

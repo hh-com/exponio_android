@@ -1,7 +1,7 @@
 package org.exponio.app.transfer
 
 import com.getcapacitor.JSObject
-import org.exponio.app.sftp.Uploader
+import org.exponio.app.upload.Uploader
 import org.exponio.app.store.PhotoStore
 
 /** Gemeinsame JSON-Abbildungen für beide Plugins. */

@@ -5,13 +5,12 @@ import type { PluginListenerHandle } from '@capacitor/core'
 import AppHeader from './components/AppHeader.vue'
 import AppSnackbar from './components/AppSnackbar.vue'
 import CameraPanel from './components/CameraPanel.vue'
-import HostKeyDialog from './components/HostKeyDialog.vue'
 import PhotoGrid from './components/PhotoGrid.vue'
 import PhotoLightbox from './components/PhotoLightbox.vue'
 import SettingsView from './components/SettingsView.vue'
 import UploadBar from './components/UploadBar.vue'
 import { initCameraListeners, refreshPermission, requestPermission, setCameraActive, setVolumeKeys } from './state/camera'
-import { answerHostKey, connection, hostKeyPrompt, quickCheck, refreshStoredHostKey, watchServerChanges } from './state/connection'
+import { connection, quickCheck, watchServerChanges } from './state/connection'
 import { flushDeletes, loadGroup, photos, removePhoto, rotatePhoto } from './state/group'
 import { closeLightbox, lightboxIndex, view } from './state/navigation'
 import { flushNote, loadNote, noteFocused } from './state/note'
@@ -32,22 +31,18 @@ watchEffect(() => setCameraActive(cameraActive.value))
 
 // Lautstärketasten nur als Auslöser, wenn die Vorschau sichtbar ist, kein Upload läuft und niemand tippt.
 watch(
-  [lightboxIndex, isUploading, () => settings.camera.volumeKeys, () => hostKeyPrompt.value, noteFocused],
+  [lightboxIndex, isUploading, () => settings.camera.volumeKeys, noteFocused],
   () => {
-    void setVolumeKeys(
-      lightboxIndex.value === null && !isUploading.value && hostKeyPrompt.value === null && !noteFocused.value,
-    )
+    void setVolumeKeys(lightboxIndex.value === null && !isUploading.value && !noteFocused.value)
   },
 )
 
 function onVolumeShutter(): void {
-  if (view.value === 'main' && lightboxIndex.value === null && hostKeyPrompt.value === null) shoot()
+  if (view.value === 'main' && lightboxIndex.value === null) shoot()
 }
 
 function onBack(): void {
-  if (hostKeyPrompt.value) {
-    answerHostKey(false)
-  } else if (lightboxIndex.value !== null) {
+  if (lightboxIndex.value !== null) {
     closeLightbox()
   } else if (view.value === 'settings') {
     void settingsRef.value?.onBack()
@@ -59,7 +54,7 @@ function onBack(): void {
 onMounted(async () => {
   await loadSettings()
   watchServerChanges()
-  await Promise.all([loadGroup(), loadNote(), initUploadListener(), refreshUploadState(), refreshStoredHostKey()])
+  await Promise.all([loadGroup(), loadNote(), initUploadListener(), refreshUploadState()])
 
   if (!isNative) return
 
@@ -115,6 +110,5 @@ onBeforeUnmount(() => {
     @rotate="rotatePhoto"
   />
 
-  <HostKeyDialog />
   <AppSnackbar />
 </template>

@@ -1,13 +1,14 @@
-package org.exponio.app.sftp
+package org.exponio.app.upload
 
 import android.content.Context
 import android.os.SystemClock
 import android.util.Log
+import org.exponio.app.api.ApiClient
+import org.exponio.app.api.ServerConfig
 import org.exponio.app.image.ImageProcessor
-import org.exponio.app.remote.RemoteConnector
-import org.exponio.app.remote.RemoteFs
-import org.exponio.app.remote.RemotePath
 import org.exponio.app.store.PhotoStore
+import org.exponio.app.transfer.ErrorCode
+import org.exponio.app.transfer.TransferException
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -20,24 +21,26 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 
 /**
- * One-Way-Upload einer Foto-Gruppe:
+ * One-Way-Upload einer Foto-Gruppe an die Exponio-Website:
  *
  *  1. Alle Fotos nativ web-optimieren (Cache in files/upload/work, wiederverwendbar beim Retry).
- *  2. Verbinden (SFTP: Host-Key muss bekannt sein; FTPS: TLS-Zertifikat muss gültig sein), Basispfad prüfen.
- *  3. Temporären Ordner `_tmp_<Zeitstempel>` anlegen bzw. wiederverwenden.
- *  4. Dateien `01.webp`, `02.webp`, … hochladen, jede per stat() auf exakte Größe verifizieren.
- *     Gibt es eine Notiz zur Gruppe, folgt sie als `info.txt` (UTF-8) auf demselben Weg.
- *  5. Vollständigen Ordnerinhalt verifizieren, dann atomar per rename in `<Zeitstempel>` umbenennen.
+ *  2. Verbinden: Token und Schreibrechte der Website prüfen (GET /status).
+ *  3. Fragen, was vom Upload schon auf dem Server liegt (GET /uploads/<Zeitstempel>).
+ *  4. Fehlende Dateien `01.webp`, `02.webp`, … einzeln senden (PUT, mit SHA-256). Die Website prüft jede Datei
+ *     und legt sie in `_tmp_<Zeitstempel>/` ab. Gibt es eine Notiz zur Gruppe, folgt sie als `info.txt` (UTF-8).
+ *  5. Abschließen (POST /complete mit der vollständigen Dateiliste): Die Website prüft den Ordnerinhalt und
+ *     benennt ihn atomar in `<Zeitstempel>` um (bei Kollision `…_2`).
  *  6. Erst danach lokale Gruppe (Fotos + Notiz) löschen.
  *
- * Der Fortschritt wird in files/upload/job.json persistiert: Bricht die Verbindung ab (oder wird die App
- * beendet), setzt der nächste Versuch im selben temporären Ordner fort und überspringt bereits
- * verifizierte Dateien. Auf dem Server wird nie etwas außerhalb des eigenen _tmp_-Ordners gelöscht.
+ * Wohin die Dateien auf dem Server kommen, entscheidet die Website. Der Fortschritt steht in files/upload/job.json:
+ * Bricht die Verbindung ab (oder wird die App beendet), setzt der nächste Versuch mit demselben Zeitstempel fort und
+ * sendet nur, was auf dem Server fehlt oder abweicht. Ging nur die Bestätigung des Abschlusses verloren, findet die
+ * Website den fertigen Ordner wieder, statt einen zweiten anzulegen.
  */
 class Uploader(
     context: Context,
-    private val remote: RemoteConnector,
     private val store: PhotoStore,
+    private val userAgent: String,
 ) {
 
     data class ImageSettings(
@@ -54,59 +57,47 @@ class Uploader(
     data class Result(val remotePath: String, val dirName: String, val count: Int, val bytes: Long)
 
     class Job(
-        val protocol: String,
-        val host: String,
-        val port: Int,
-        val username: String,
-        val basePath: String,
+        val baseUrl: String,
         val dirName: String,
-        var finalName: String?,
-        val uploaded: MutableMap<String, String>,
+        /** Abschluss wurde gesendet, die Antwort steht aus – beim nächsten Versuch zuerst nachfragen. */
+        var completing: Boolean,
+        /** Vom Server bestätigte Dateien (nur für die Anzeige „x/y“; maßgeblich ist beim Fortsetzen der Server). */
+        val uploaded: MutableSet<String>,
         var photoIds: List<String>,
     ) {
-        fun matches(cfg: ServerConfig): Boolean =
-            protocol == cfg.protocol.id &&
-                host == HostKeyStore.normalizeHost(cfg.host) &&
-                port == cfg.port &&
-                username == cfg.username.trim() &&
-                basePath == RemotePath.normalizeBase(cfg.basePath)
+        val host: String get() = try {
+            ServerConfig(baseUrl).host
+        } catch (_: Exception) {
+            baseUrl
+        }
 
         fun toJson(): JSONObject = JSONObject().apply {
-            put("protocol", protocol)
-            put("host", host)
-            put("port", port)
-            put("username", username)
-            put("basePath", basePath)
+            put("baseUrl", baseUrl)
             put("dirName", dirName)
-            put("finalName", finalName ?: JSONObject.NULL)
-            put("uploaded", JSONObject().apply { uploaded.forEach { (k, v) -> put(k, v) } })
+            put("completing", completing)
+            put("uploaded", JSONArray().apply { uploaded.forEach { put(it) } })
             put("photoIds", JSONArray().apply { photoIds.forEach { put(it) } })
         }
 
         companion object {
             fun fromJson(json: JSONObject): Job {
-                val uploadedJson = json.optJSONObject("uploaded") ?: JSONObject()
-                val uploaded = mutableMapOf<String, String>()
-                uploadedJson.keys().forEach { k -> uploaded[k] = uploadedJson.getString(k) }
+                val uploadedJson = json.optJSONArray("uploaded") ?: JSONArray()
                 val idsJson = json.optJSONArray("photoIds") ?: JSONArray()
-                val ids = (0 until idsJson.length()).map { idsJson.getString(it) }
                 return Job(
-                    protocol = json.optString("protocol", ServerConfig.Protocol.SFTP.id),
-                    host = json.getString("host"),
-                    port = json.getInt("port"),
-                    username = json.getString("username"),
-                    basePath = json.getString("basePath"),
+                    baseUrl = json.getString("baseUrl"),
                     dirName = json.getString("dirName"),
-                    finalName = if (json.isNull("finalName")) null else json.optString("finalName"),
-                    uploaded = uploaded,
-                    photoIds = ids,
+                    completing = json.optBoolean("completing", false),
+                    uploaded = (0 until uploadedJson.length()).map { uploadedJson.getString(it) }.toMutableSet(),
+                    photoIds = (0 until idsJson.length()).map { idsJson.getString(it) },
                 )
             }
         }
     }
 
     /** Eine hochzuladende Datei. [label] benennt sie in Fehlermeldungen („Bild 3“, „Notiz“). */
-    private class Entry(val remoteName: String, val file: File, val key: String, val size: Long, val label: String)
+    private class Entry(val remoteName: String, val file: File, val size: Long, val sha256: String, val label: String) {
+        fun describe() = ApiClient.RemoteFile(remoteName, size, sha256)
+    }
 
     private val baseDir = File(context.filesDir, "upload")
     private val workDir = File(baseDir, "work")
@@ -114,9 +105,8 @@ class Uploader(
 
     private val cancelled = AtomicBoolean(false)
 
-    /** Bricht die aktive Verbindung hart ab (von einem anderen Thread aus). */
     @Volatile
-    private var activeAbort: (() -> Unit)? = null
+    private var activeClient: ApiClient? = null
 
     private var lastEmit = 0L
     private var lastPhase = ""
@@ -128,11 +118,11 @@ class Uploader(
 
     fun cancel() {
         cancelled.set(true)
-        val abort = activeAbort ?: return
+        val client = activeClient ?: return
         // Schließen kann blockieren → nicht auf dem aufrufenden Thread.
         Thread({
             try {
-                abort()
+                client.abort()
             } catch (_: Exception) {
             }
         }, "pt-cancel").start()
@@ -145,6 +135,7 @@ class Uploader(
     @Throws(TransferException::class)
     fun run(
         cfg: ServerConfig,
+        token: String,
         image: ImageSettings,
         photoIds: List<String>,
         onProgress: (Progress) -> Unit,
@@ -163,16 +154,12 @@ class Uploader(
         }
 
         var job = loadJob()
-        if (job == null || !job.matches(cfg)) {
+        if (job == null || job.baseUrl != cfg.baseUrl) {
             job = Job(
-                protocol = cfg.protocol.id,
-                host = HostKeyStore.normalizeHost(cfg.host),
-                port = cfg.port,
-                username = cfg.username.trim(),
-                basePath = RemotePath.normalizeBase(cfg.basePath),
+                baseUrl = cfg.baseUrl,
                 dirName = SimpleDateFormat("yyyy-MM-dd_HHmmss", Locale.US).format(Date()),
-                finalName = null,
-                uploaded = mutableMapOf(),
+                completing = false,
+                uploaded = mutableSetOf(),
                 photoIds = photoIds,
             )
         }
@@ -182,7 +169,7 @@ class Uploader(
         // ---- Phase 1: Web-Optimierung (nativ) -------------------------------------------------
         val total = photoIds.size
         val digits = max(2, total.toString().length)
-        val entries = ArrayList<Entry>(total)
+        val entries = ArrayList<Entry>(total + 1)
         photoIds.forEachIndexed { index, id ->
             checkCancelled()
             emit(onProgress, Progress(PHASE_PROCESS, index + 1, total, PROCESS_WEIGHT * index / total), force = true)
@@ -210,7 +197,7 @@ class Uploader(
                 }
             }
             val remoteName = (index + 1).toString().padStart(digits, '0') + "." + image.format.extension
-            entries += Entry(remoteName, work, work.name, work.length(), "Bild ${index + 1}")
+            entries += Entry(remoteName, work, work.length(), sha256(work), "Bild ${index + 1}")
         }
         // Notiz als letzte Datei: Ihr Inhalt steckt im Namen der Arbeitsdatei, eine Änderung nach einem
         // abgebrochenen Upload wird also wie ein gedrehtes Foto erneut übertragen.
@@ -222,15 +209,11 @@ class Uploader(
         // ---- Phase 2: Verbinden + Übertragen ---------------------------------------------------
         checkCancelled()
         emit(onProgress, Progress(PHASE_CONNECT, 0, total, PROCESS_WEIGHT), force = true)
-        val fs = try {
-            remote.open(cfg, null) { abort -> activeAbort = abort }
-        } catch (e: TransferException) {
-            activeAbort = null
-            if (cancelled.get()) throw cancelledException()
-            throw e
-        }
+        val client = ApiClient(cfg, token, userAgent)
+        activeClient = client
         try {
-            return transfer(fs, job, entries, onProgress)
+            if (cancelled.get()) throw cancelledException()
+            return transfer(client, job, entries, cfg, onProgress)
         } catch (e: TransferException) {
             if (cancelled.get()) throw cancelledException()
             throw e
@@ -243,148 +226,99 @@ class Uploader(
                 cause = e,
             )
         } finally {
-            activeAbort = null
-            fs.close()
+            activeClient = null
         }
     }
 
     private fun transfer(
-        fs: RemoteFs,
+        client: ApiClient,
         job: Job,
         entries: List<Entry>,
+        cfg: ServerConfig,
         onProgress: (Progress) -> Unit,
     ): Result {
-        val base = job.basePath
-        remote.checkBasePath(fs, base, writeTest = false)
+        // Token und Schreibrechte prüfen, bevor Daten fließen
+        client.status(writeTest = false)
 
-        val tmpName = TMP_PREFIX + job.dirName
-        val tmpPath = RemotePath.join(base, tmpName)
-        // Der Fortschritt zählt Bilder; die Notiz am Ende läuft unter dem letzten Bild mit.
         val total = job.photoIds.size
+        val manifest = entries.map { it.describe() }
+
+        // Sonderfall: Abschluss wurde beim letzten Versuch gesendet, die Bestätigung ging aber verloren.
+        if (job.completing) {
+            try {
+                return finish(job, entries, client.complete(job.dirName, manifest), cfg)
+            } catch (e: TransferException) {
+                if (e.code != ErrorCode.UPLOAD_NOT_FOUND && e.code != ErrorCode.VERIFY_FAILED) throw e
+                job.completing = false
+                saveJob(job)
+            }
+        }
+
+        // Was liegt schon auf dem Server? Gleiche Prüfsumme = schon übertragen, alles andere wird (neu) gesendet.
+        val remote = client.openFiles(job.dirName).orEmpty().associateBy { it.name }
+        job.uploaded.retainAll(remote.keys)
         val totalBytes = max(1L, entries.sumOf { it.size })
-        val expectedNames = entries.map { it.remoteName }.toSet()
-
-        // Sonderfall: Rename wurde beim letzten Versuch ausgeführt, die Bestätigung ging aber verloren.
-        job.finalName?.let { finalName ->
-            val finalPath = RemotePath.join(base, finalName)
-            val tmpExists = fs.stat(tmpPath) != null
-            val finalStat = fs.stat(finalPath)
-            if (!tmpExists && finalStat?.isDir == true && listingMatches(fs.listFiles(finalPath), entries)) {
-                return finish(job, entries, finalPath, finalName)
-            }
-            job.finalName = null
-            saveJob(job)
-        }
-
-        val tmpStat = fs.stat(tmpPath)
-        if (tmpStat == null) {
-            fs.mkdir(tmpPath)
-            job.uploaded.clear()
-            saveJob(job)
-        } else if (!tmpStat.isDir) {
-            throw TransferException(ErrorCode.REMOTE_ERROR, "„$tmpName“ existiert auf dem Server bereits als Datei.")
-        }
-
-        // Reste früherer Versuche (andere Nummerierung/Format) – nur im eigenen _tmp_-Ordner.
-        val remoteBefore = fs.listFiles(tmpPath)
-        for (name in remoteBefore.keys) {
-            if (name !in expectedNames) {
-                try {
-                    fs.delete(RemotePath.join(tmpPath, name))
-                } catch (e: TransferException) {
-                    Log.w(TAG, "Konnte Altdatei $name nicht entfernen: ${e.message}")
-                }
-            }
-        }
-
         var doneBytes = 0L
+
         entries.forEachIndexed { index, entry ->
             checkCancelled()
+            // Der Fortschritt zählt Bilder; die Notiz am Ende läuft unter dem letzten Bild mit.
             val current = minOf(index + 1, total)
-            val remotePath = RemotePath.join(tmpPath, entry.remoteName)
-            val alreadyDone = job.uploaded[entry.remoteName] == entry.key && remoteBefore[entry.remoteName] == entry.size
-
-            if (!alreadyDone) {
+            val there = remote[entry.remoteName]
+            if (there == null || there.size != entry.size || there.sha256 != entry.sha256) {
                 emit(onProgress, Progress(PHASE_UPLOAD, current, total, uploadFraction(doneBytes, totalBytes)), force = true)
                 job.uploaded.remove(entry.remoteName)
                 saveJob(job)
 
-                // Unvollständige Datei eines früheren Versuchs (nur im eigenen _tmp_-Ordner) zuerst entfernen –
-                // viele FTP-Server erlauben kein Überschreiben.
-                if (entry.remoteName in remoteBefore) fs.delete(remotePath)
-
                 val startBytes = doneBytes
                 var sent = 0L
-                FileInputStream(entry.file).use { input ->
-                    fs.upload(input, remotePath) { count ->
-                        sent += count
-                        emit(
-                            onProgress,
-                            Progress(PHASE_UPLOAD, current, total, uploadFraction(startBytes + sent, totalBytes)),
-                            force = false,
-                        )
-                        !cancelled.get()
-                    }
+                val saved = client.putFile(job.dirName, entry.remoteName, entry.file, entry.sha256) { count ->
+                    sent += count
+                    emit(
+                        onProgress,
+                        Progress(PHASE_UPLOAD, current, total, uploadFraction(startBytes + sent, totalBytes)),
+                        force = false,
+                    )
+                    !cancelled.get()
                 }
                 checkCancelled()
-
-                val remoteSize = fs.stat(remotePath)?.size ?: -1L
-                if (remoteSize != entry.size) {
+                if (saved.size != entry.size || saved.sha256 != entry.sha256) {
                     throw TransferException(
                         ErrorCode.VERIFY_FAILED,
-                        "${entry.label}: Größe auf dem Server stimmt nicht ($remoteSize statt ${entry.size} Bytes).",
+                        "${entry.label}: Die Website bestätigt eine andere Datei (${saved.size} statt ${entry.size} Bytes).",
                     )
                 }
-                job.uploaded[entry.remoteName] = entry.key
-                saveJob(job)
             }
+            job.uploaded.add(entry.remoteName)
+            saveJob(job)
             doneBytes += entry.size
             emit(onProgress, Progress(PHASE_UPLOAD, current, total, uploadFraction(doneBytes, totalBytes)), force = true)
         }
 
-        // ---- Phase 3: Gesamtverifikation + atomares Umbenennen ---------------------------------
+        // ---- Phase 3: Abschluss – die Website prüft alles und benennt den Ordner atomar um -----
         checkCancelled()
         emit(onProgress, Progress(PHASE_FINALIZE, total, total, 0.98), force = true)
-        val listing = fs.listFiles(tmpPath)
-        for (entry in entries) {
-            val size = listing[entry.remoteName]
-            if (size != entry.size) {
-                throw TransferException(
-                    ErrorCode.VERIFY_FAILED,
-                    "Verifikation fehlgeschlagen: ${entry.remoteName} (${entry.label}) fehlt oder ist unvollständig.",
-                )
-            }
-        }
-        for (extra in listing.keys - expectedNames) {
-            try {
-                fs.delete(RemotePath.join(tmpPath, extra))
-            } catch (e: TransferException) {
-                throw TransferException(
-                    ErrorCode.VERIFY_FAILED,
-                    "Unerwartete Datei „$extra“ im Upload-Ordner kann nicht entfernt werden.",
-                )
-            }
-        }
-
-        val finalName = pickFreeName(fs, base, job.dirName)
-        val finalPath = RemotePath.join(base, finalName)
-        job.finalName = finalName
+        job.completing = true
         saveJob(job)
-        checkCancelled()
-        fs.rename(tmpPath, finalPath)
-
-        if (fs.stat(finalPath)?.isDir != true) {
-            throw TransferException(ErrorCode.VERIFY_FAILED, "Umbenennen des Upload-Ordners wurde vom Server nicht bestätigt.")
+        val completed = try {
+            client.complete(job.dirName, manifest)
+        } catch (e: TransferException) {
+            // Eindeutig nicht abgeschlossen → nächster Versuch gleicht wieder mit dem Server ab
+            if (e.code == ErrorCode.VERIFY_FAILED || e.code == ErrorCode.UPLOAD_NOT_FOUND) {
+                job.completing = false
+                saveJob(job)
+            }
+            throw e
         }
-        return finish(job, entries, finalPath, finalName)
+        return finish(job, entries, completed, cfg)
     }
 
-    private fun finish(job: Job, entries: List<Entry>, finalPath: String, finalName: String): Result {
+    private fun finish(job: Job, entries: List<Entry>, completed: ApiClient.Completed, cfg: ServerConfig): Result {
         store.delete(job.photoIds)
         store.clearNote()
         workDir.listFiles()?.forEach { it.delete() }
         synchronized(this) { jobFile.delete() }
-        return Result(finalPath, finalName, job.photoIds.size, entries.sumOf { it.size })
+        return Result("${cfg.host} › ${completed.folder}", completed.folder, job.photoIds.size, entries.sumOf { it.size })
     }
 
     /**
@@ -395,24 +329,26 @@ class Uploader(
         val text = store.note().replace("\r\n", "\n").replace('\r', '\n').trim()
         if (text.isEmpty()) return null
         val bytes = (text + "\n").toByteArray(Charsets.UTF_8)
-        val hash = MessageDigest.getInstance("SHA-256").digest(bytes)
-            .take(8)
-            .joinToString("") { "%02x".format(it) }
-        val work = File(workDir, "note_$hash.txt")
+        val hash = hex(MessageDigest.getInstance("SHA-256").digest(bytes))
+        val work = File(workDir, "note_${hash.take(16)}.txt")
         if (!work.isFile || work.length() != bytes.size.toLong()) work.writeBytes(bytes)
-        return Entry(NOTE_FILE_NAME, work, work.name, bytes.size.toLong(), "Notiz")
+        return Entry(NOTE_FILE_NAME, work, bytes.size.toLong(), hash, "Notiz")
     }
 
-    private fun pickFreeName(fs: RemoteFs, base: String, dirName: String): String {
-        for (i in 1..99) {
-            val name = if (i == 1) dirName else "${dirName}_$i"
-            if (fs.stat(RemotePath.join(base, name)) == null) return name
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        FileInputStream(file).use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
         }
-        throw TransferException(ErrorCode.REMOTE_ERROR, "Kein freier Ordnername für „$dirName“ gefunden.")
+        return hex(digest.digest())
     }
 
-    private fun listingMatches(listing: Map<String, Long>, entries: List<Entry>): Boolean =
-        entries.all { listing[it.remoteName] == it.size }
+    private fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
 
     private fun uploadFraction(done: Long, total: Long): Double =
         PROCESS_WEIGHT + UPLOAD_WEIGHT * (done.toDouble() / total).coerceIn(0.0, 1.0)
@@ -447,7 +383,8 @@ class Uploader(
         return try {
             Job.fromJson(JSONObject(jobFile.readText()))
         } catch (e: Exception) {
-            Log.w(TAG, "Job-Datei defekt, wird verworfen: ${e.message}")
+            // auch: Job eines älteren App-Stands (SFTP/FTPS) – die Fotos liegen ja noch lokal
+            Log.w(TAG, "Job-Datei unbrauchbar, wird verworfen: ${e.message}")
             jobFile.delete()
             null
         }
@@ -466,7 +403,6 @@ class Uploader(
 
     companion object {
         private const val TAG = "PtUploader"
-        const val TMP_PREFIX = "_tmp_"
         const val NOTE_FILE_NAME = "info.txt"
 
         const val PHASE_PROCESS = "process"

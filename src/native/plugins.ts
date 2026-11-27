@@ -17,10 +17,8 @@ export interface NativePhoto {
 }
 
 export type FlashMode = 'off' | 'on' | 'auto'
-export type AuthMethod = 'password' | 'key'
-export type Protocol = 'sftp' | 'ftps'
 export type ImageFormat = 'webp' | 'jpeg'
-export type SecretName = 'password' | 'privateKey' | 'passphrase'
+export type SecretName = 'token'
 
 export interface CameraRect {
   x: number
@@ -41,12 +39,10 @@ export interface CameraState extends ZoomInfo {
   rotation: number
 }
 
+/** Wohin auf dem Server die Fotos kommen, entscheidet die Website – die App kennt nur ihre Adresse. */
 export interface ServerSettings {
-  protocol: Protocol
-  host: string
-  port: number
-  username: string
-  auth: AuthMethod
+  /** z. B. https://exponio.example.org */
+  url: string
 }
 
 export interface ImageSettings {
@@ -57,23 +53,18 @@ export interface ImageSettings {
 }
 
 export interface SecretStatus {
-  password: boolean
-  passphrase: boolean
-  privateKey: boolean
-  keyType?: string
-  keyEncrypted?: boolean
-  passphraseOk?: boolean
-  keyError?: string
+  token: boolean
+  /** Letzte vier Zeichen – so zeigt sie auch das Backend der Website unter App-Zugänge. */
+  tokenHint?: string
 }
 
 export interface TestResult {
   ok: true
-  protocol: Protocol
-  /** SFTP: SSH-Version · FTPS: TLS-Version, Zertifikatsname, Aussteller */
-  serverVersion: string
-  fingerprint: string
-  keyType: string
-  newlyTrusted: boolean
+  /** normalisierte Adresse, z. B. https://exponio.example.org */
+  url: string
+  /** Name der Website aus ihren Einstellungen */
+  site: string
+  api: number
   writeTested: boolean
 }
 
@@ -133,15 +124,10 @@ export interface PtTransferPlugin {
   /** Notiz zur Gruppe; geht beim Upload als info.txt mit. Leerer Text entfernt sie. */
   getNote(): Promise<{ text: string }>
   setNote(options: { text: string }): Promise<void>
+  /** Token setzen (null = löschen). Gelesen wird es nur nativ. */
   setSecret(options: { name: SecretName; value: string | null }): Promise<SecretStatus>
   getSecretStatus(): Promise<SecretStatus>
-  getHostKey(options: { host: string; port: number }): Promise<{ fingerprint?: string; keyType?: string }>
-  resetHostKey(options: { host: string; port: number }): Promise<void>
-  testConnection(options: {
-    server: ServerSettings
-    trustFingerprint?: string
-    writeTest?: boolean
-  }): Promise<TestResult>
+  testConnection(options: { server: ServerSettings; writeTest?: boolean }): Promise<TestResult>
   upload(options: { server: ServerSettings; image: ImageSettings; photoIds: string[] }): Promise<UploadResult>
   cancelUpload(): Promise<void>
   getUploadState(): Promise<UploadState>

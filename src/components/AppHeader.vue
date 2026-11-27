@@ -3,31 +3,29 @@ import { computed } from 'vue'
 import AppIcon from './AppIcon.vue'
 import { connection, quickCheck } from '../state/connection'
 import { openSettings } from '../state/navigation'
-import { settings } from '../state/settings'
+import { settings, urlHost } from '../state/settings'
 import { isUploading } from '../state/upload'
 
 const status = computed(() => {
   switch (connection.state) {
     case 'unconfigured':
-      return { label: 'Server einrichten', dot: 'bg-zinc-500', text: 'text-zinc-300', pulse: false }
+      return { label: 'Website verbinden', dot: 'bg-zinc-500', text: 'text-zinc-300', pulse: false }
     case 'unknown':
       return { label: 'Ungeprüft', dot: 'bg-zinc-400', text: 'text-zinc-300', pulse: false }
     case 'checking':
       return { label: 'Prüfe…', dot: 'bg-warn', text: 'text-amber-200', pulse: true }
     case 'ok':
       return { label: 'Verbunden', dot: 'bg-ok', text: 'text-emerald-200', pulse: false }
-    case 'hostkey':
-      return { label: 'Host-Key prüfen', dot: 'bg-warn', text: 'text-amber-200', pulse: false }
     case 'error':
     default:
       return { label: 'Keine Verbindung', dot: 'bg-danger', text: 'text-red-200', pulse: false }
   }
 })
 
-const hostLabel = computed(() => settings.server.host.trim())
+const hostLabel = computed(() => urlHost(settings.server.url))
 
 function onStatusTap(): void {
-  if (connection.state === 'unconfigured' || connection.state === 'hostkey') {
+  if (connection.state === 'unconfigured') {
     openSettings()
   } else if (connection.state !== 'checking' && !isUploading.value) {
     void quickCheck()

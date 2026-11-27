@@ -14,7 +14,7 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * Verschlüsselte Ablage für Zugangsdaten (Passwort, Private Key, Passphrase).
+ * Verschlüsselte Ablage für das Token der Website (Backend → System → App-Zugänge).
  *
  * Der AES-256-GCM-Schlüssel liegt im Android Keystore (hardwaregestützt, nicht exportierbar);
  * in den SharedPreferences stehen nur IV + Chiffretext. Die WebView kann Secrets setzen und
@@ -24,6 +24,13 @@ class SecretStore private constructor(context: Context) {
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences("pt_secrets", Context.MODE_PRIVATE)
+
+    init {
+        // Zugangsdaten früherer Versionen (SFTP/FTPS) werden nicht mehr gebraucht.
+        if (LEGACY_NAMES.any { prefs.contains(it) }) {
+            prefs.edit().apply { LEGACY_NAMES.forEach { remove(it) } }.apply()
+        }
+    }
 
     @Synchronized
     fun put(name: String, value: String?) {
@@ -87,10 +94,9 @@ class SecretStore private constructor(context: Context) {
         private const val KEY_ALIAS = "exponio_secrets_v1"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
 
-        const val PASSWORD = "password"
-        const val PRIVATE_KEY = "privateKey"
-        const val PASSPHRASE = "passphrase"
-        val NAMES = setOf(PASSWORD, PRIVATE_KEY, PASSPHRASE)
+        const val TOKEN = "token"
+        val NAMES = setOf(TOKEN)
+        private val LEGACY_NAMES = listOf("password", "privateKey", "passphrase")
 
         @Volatile
         private var instance: SecretStore? = null

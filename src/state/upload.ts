@@ -1,7 +1,7 @@
 import { computed, reactive } from 'vue'
 import { PtTransfer, isNative, toNativeError } from '../native/plugins'
 import type { NativeError, UploadProgress, UploadResult, UploadState } from '../native/plugins'
-import { connection } from './connection'
+import { CONNECTION_ERRORS, connection } from './connection'
 import { flushDeletes, loadGroup, photos, settleRotations } from './group'
 import { flushNote, loadNote } from './note'
 import { imagePayload, serverPayload } from './settings'
@@ -89,12 +89,7 @@ export async function startUpload(): Promise<void> {
     } else {
       upload.status = 'error'
       upload.error = err
-      if (err.code === 'HOST_KEY_UNKNOWN' || err.code === 'HOST_KEY_CHANGED') {
-        connection.state = 'hostkey'
-        connection.message = err.message
-      } else if (
-        ['UNREACHABLE', 'TIMEOUT', 'HOST_NOT_FOUND', 'CONNECTION_LOST', 'AUTH_FAILED', 'TLS_CERT_INVALID', 'TLS_ERROR'].includes(err.code)
-      ) {
+      if (CONNECTION_ERRORS.includes(err.code)) {
         connection.state = 'error'
         connection.message = err.message
       }

@@ -58,14 +58,6 @@ android {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
     }
-
-    packaging {
-        resources {
-            // JSch und Bouncy Castle bringen identische Multi-Release-Metadaten mit,
-            // die Android nicht nutzt und die sonst zu "2 files found" führen.
-            excludes += ['/META-INF/versions/**', '/META-INF/DEPENDENCIES', '/META-INF/LICENSE*', '/META-INF/NOTICE*']
-        }
-    }
 }
 
 kotlin {
@@ -99,14 +91,7 @@ dependencies {
     // EXIF lesen (Ausrichtung) und schreiben (Metadaten übernehmen)
     implementation "androidx.exifinterface:exifinterface:1.4.2"
 
-    // SFTP: gepflegter JSch-Fork; Bouncy Castle für Ed25519/Curve25519/ML-KEM auf Android
-    implementation "com.github.mwiede:jsch:2.28.8"
-    implementation "org.bouncycastle:bcprov-jdk18on:1.87"
-
-    // FTPS (explizites TLS) für Webhosting ohne SFTP. Bouncy Castle JSSE, weil viele Server
-    // (ProFTPD-Standard) verlangen, dass die Datenverbindung die TLS-Sitzung wiederverwendet.
-    implementation "commons-net:commons-net:3.13.0"
-    implementation "org.bouncycastle:bctls-jdk18on:1.87"
+    // Upload an die Website: HttpsURLConnection und org.json aus Android, keine weitere Bibliothek
 
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"

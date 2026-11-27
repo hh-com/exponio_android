@@ -4,7 +4,7 @@ import AppIcon from './AppIcon.vue'
 import { photos } from '../state/group'
 import { openSettings } from '../state/navigation'
 import { NOTE_MAX_LENGTH, note, noteFocused, setNote } from '../state/note'
-import { isServerConfigured, settings } from '../state/settings'
+import { isServerConfigured, settings, urlHost } from '../state/settings'
 import { showToast } from '../state/toast'
 import { cancelUpload, dismissUploadError, isUploading, progressText, startUpload, upload } from '../state/upload'
 
@@ -35,17 +35,11 @@ function onUpload(): void {
 }
 
 const percent = computed(() => Math.round((upload.progress?.fraction ?? 0) * 100))
-const text = computed(() => progressText(upload.progress, settings.server.host.trim()))
+const text = computed(() => progressText(upload.progress, urlHost(settings.server.url)))
 
-const needsSettings = computed(
-  () => upload.error?.code === 'HOST_KEY_UNKNOWN' ||
-    upload.error?.code === 'HOST_KEY_CHANGED' ||
-    upload.error?.code === 'NOT_CONFIGURED' ||
-    upload.error?.code === 'NO_CREDENTIALS' ||
-    upload.error?.code === 'KEY_INVALID' ||
-    upload.error?.code === 'BASE_PATH_MISSING' ||
-    upload.error?.code === 'BASE_PATH_NOT_DIR',
-)
+/** Fehler, die sich nur in den Einstellungen beheben lassen (Adresse oder Token). */
+const SETTINGS_ERRORS = ['NOT_CONFIGURED', 'NO_CREDENTIALS', 'INSECURE_URL', 'AUTH_FAILED', 'REDIRECT', 'NOT_EXPONIO']
+const needsSettings = computed(() => SETTINGS_ERRORS.includes(upload.error?.code ?? ''))
 
 const resumeHint = computed(() => {
   const p = upload.pending
@@ -165,7 +159,7 @@ const buttonLabel = computed(() => {
           @click="openSettings"
         >
           <AppIcon name="server" :size="18" />
-          Server einrichten, um hochzuladen
+          Website verbinden, um hochzuladen
         </button>
         <button
           v-else
