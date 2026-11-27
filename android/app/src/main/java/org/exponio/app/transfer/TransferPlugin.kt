@@ -101,6 +101,30 @@ class TransferPlugin : Plugin() {
         }
     }
 
+    @PluginMethod
+    fun getNote(call: PluginCall) {
+        ioExecutor.execute {
+            call.resolve(JSObject().put("text", store.note()))
+        }
+    }
+
+    @PluginMethod
+    fun setNote(call: PluginCall) {
+        if (uploadRunning.get()) {
+            call.reject("Während des Uploads kann die Notiz nicht geändert werden.", ErrorCode.BUSY)
+            return
+        }
+        val text = call.getString("text").orEmpty()
+        ioExecutor.execute {
+            try {
+                store.setNote(text)
+                call.resolve()
+            } catch (e: Exception) {
+                call.reject("Notiz konnte nicht gespeichert werden: ${e.message}", "IO_ERROR")
+            }
+        }
+    }
+
     // ------------------------------------------------------------------------------------------
     // Zugangsdaten (write-only aus Sicht der WebView)
     // ------------------------------------------------------------------------------------------

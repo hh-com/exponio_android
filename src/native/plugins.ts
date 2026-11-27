@@ -130,6 +130,9 @@ export interface PtTransferPlugin {
   deletePhotos(options: { ids: string[] }): Promise<void>
   /** Verlustfrei im Uhrzeigersinn drehen (Vierteldrehungen à 90°). */
   rotatePhoto(options: { id: string; quarterTurns: number }): Promise<NativePhoto>
+  /** Notiz zur Gruppe; geht beim Upload als info.txt mit. Leerer Text entfernt sie. */
+  getNote(): Promise<{ text: string }>
+  setNote(options: { text: string }): Promise<void>
   setSecret(options: { name: SecretName; value: string | null }): Promise<SecretStatus>
   getSecretStatus(): Promise<SecretStatus>
   getHostKey(options: { host: string; port: number }): Promise<{ fingerprint?: string; keyType?: string }>

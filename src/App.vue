@@ -14,6 +14,7 @@ import { initCameraListeners, refreshPermission, requestPermission, setCameraAct
 import { answerHostKey, connection, hostKeyPrompt, quickCheck, refreshStoredHostKey, watchServerChanges } from './state/connection'
 import { flushDeletes, loadGroup, photos, removePhoto, rotatePhoto } from './state/group'
 import { closeLightbox, lightboxIndex, view } from './state/navigation'
+import { flushNote, loadNote, noteFocused } from './state/note'
 import { flushSettings, loadSettings, settings, settingsLoaded } from './state/settings'
 import { shoot } from './state/shoot'
 import { initUploadListener, isUploading, refreshUploadState } from './state/upload'
@@ -29,11 +30,13 @@ const STALE_MS = 5 * 60 * 1000
 const cameraActive = computed(() => settingsLoaded.value && view.value === 'main')
 watchEffect(() => setCameraActive(cameraActive.value))
 
-// Lautstärketasten nur als Auslöser, wenn die Vorschau sichtbar ist und kein Upload läuft.
+// Lautstärketasten nur als Auslöser, wenn die Vorschau sichtbar ist, kein Upload läuft und niemand tippt.
 watch(
-  [lightboxIndex, isUploading, () => settings.camera.volumeKeys, () => hostKeyPrompt.value],
+  [lightboxIndex, isUploading, () => settings.camera.volumeKeys, () => hostKeyPrompt.value, noteFocused],
   () => {
-    void setVolumeKeys(lightboxIndex.value === null && !isUploading.value && hostKeyPrompt.value === null)
+    void setVolumeKeys(
+      lightboxIndex.value === null && !isUploading.value && hostKeyPrompt.value === null && !noteFocused.value,
+    )
   },
 )
 
@@ -56,7 +59,7 @@ function onBack(): void {
 onMounted(async () => {
   await loadSettings()
   watchServerChanges()
-  await Promise.all([loadGroup(), initUploadListener(), refreshUploadState(), refreshStoredHostKey()])
+  await Promise.all([loadGroup(), loadNote(), initUploadListener(), refreshUploadState(), refreshStoredHostKey()])
 
   if (!isNative) return
 
@@ -71,6 +74,7 @@ onMounted(async () => {
     await CapApp.addListener('pause', () => {
       void flushDeletes()
       void flushSettings()
+      void flushNote()
     }),
   )
   handles.push(

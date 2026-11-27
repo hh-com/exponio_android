@@ -18,6 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
  *   files/group/photos/<id>.jpg    – Originale (Quelle der Wahrheit, Reihenfolge = Dateiname)
  *   files/group/previews/<id>.jpg  – Lightbox-Vorschau (~2000 px, gedreht)
  *   files/group/thumbs/<id>.jpg    – Raster-Thumbnail (~360 px, gedreht)
+ *   files/group/note.txt           – Notiz zur Gruppe (wird beim Upload als info.txt mitgeschickt)
  */
 class PhotoStore private constructor(context: Context) {
 
@@ -35,6 +36,7 @@ class PhotoStore private constructor(context: Context) {
     private val photosDir = File(root, "photos")
     private val previewsDir = File(root, "previews")
     private val thumbsDir = File(root, "thumbs")
+    private val noteFile = File(root, "note.txt")
 
     private val sizeCache = ConcurrentHashMap<String, ImageProcessor.Size>()
     private var lastMillis = 0L
@@ -169,12 +171,47 @@ class PhotoStore private constructor(context: Context) {
         }
     }
 
+    /** Notiz zur Gruppe, genau so, wie sie eingegeben wurde. Leer, wenn keine vorhanden ist. */
+    @Synchronized
+    fun note(): String =
+        try {
+            if (noteFile.isFile) noteFile.readText() else ""
+        } catch (e: IOException) {
+            Log.e(TAG, "Notiz nicht lesbar: ${e.message}")
+            ""
+        }
+
+    /** Speichert die Notiz atomar; eine leere Notiz entfernt die Datei. */
+    @Synchronized
+    @Throws(IOException::class)
+    fun setNote(text: String) {
+        val value = text.take(MAX_NOTE_LENGTH)
+        if (value.isBlank()) {
+            noteFile.delete()
+            return
+        }
+        val tmp = File(root, "note.txt.tmp")
+        tmp.writeText(value)
+        if (!tmp.renameTo(noteFile)) {
+            tmp.delete()
+            throw IOException("Notiz konnte nicht gespeichert werden")
+        }
+    }
+
+    @Synchronized
+    fun clearNote() {
+        noteFile.delete()
+    }
+
     private fun requireValidId(id: String) {
         if (!ID_PATTERN.matches(id)) throw IOException("Ungültige Foto-ID")
     }
 
     companion object {
         private const val TAG = "PtStore"
+
+        /** Obergrenze für die Notiz in Zeichen (gleicher Wert wie NOTE_MAX_LENGTH in src/state/note.ts). */
+        const val MAX_NOTE_LENGTH = 5000
 
         /** Schützt zusätzlich vor Pfad-Manipulation über IDs aus der WebView. */
         val ID_PATTERN = Regex("^\\d{13}_\\d{3}$")

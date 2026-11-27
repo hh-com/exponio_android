@@ -1,12 +1,39 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import AppIcon from './AppIcon.vue'
 import { photos } from '../state/group'
 import { openSettings } from '../state/navigation'
+import { NOTE_MAX_LENGTH, note, noteFocused, setNote } from '../state/note'
 import { isServerConfigured, settings } from '../state/settings'
-import { cancelUpload, dismissUploadError, progressText, startUpload, upload } from '../state/upload'
+import { showToast } from '../state/toast'
+import { cancelUpload, dismissUploadError, isUploading, progressText, startUpload, upload } from '../state/upload'
 
 const count = computed(() => photos.value.length)
+const noteField = ref<HTMLTextAreaElement | null>(null)
+
+// Nach erfolgreichem Upload ist die Notiz geleert; solange die Erfolgsmeldung steht, bleibt das Feld weg.
+const showNote = computed(() => !(upload.status === 'done' && upload.result && count.value === 0))
+
+function onNoteInput(e: Event): void {
+  setNote((e.target as HTMLTextAreaElement).value)
+}
+
+function onNoteFocus(focused: boolean): void {
+  noteFocused.value = focused
+}
+
+function clearNote(): void {
+  const previous = note.value
+  setNote('')
+  showToast('Notiz gelöscht', { action: { label: 'Rückgängig', run: () => setNote(previous) }, duration: 5000 })
+}
+
+function onUpload(): void {
+  // Tastatur schließen, damit der Fortschritt sichtbar ist.
+  noteField.value?.blur()
+  void startUpload()
+}
+
 const percent = computed(() => Math.round((upload.progress?.fraction ?? 0) * 100))
 const text = computed(() => progressText(upload.progress, settings.server.host.trim()))
 
@@ -35,6 +62,34 @@ const buttonLabel = computed(() => {
 <template>
   <footer class="pb-safe px-safe relative z-10 border-t border-line bg-surface">
     <div class="px-4 py-3">
+      <!-- Notiz → info.txt. Diktieren über das Mikrofon der Bildschirmtastatur. -->
+      <div v-if="showNote" class="relative mb-2.5">
+        <textarea
+          ref="noteField"
+          :value="note"
+          class="field field-sizing-content block max-h-32 min-h-12 resize-none py-2.5 pr-11 leading-snug disabled:opacity-60"
+          :maxlength="NOTE_MAX_LENGTH"
+          :disabled="isUploading"
+          placeholder="Notiz zum Objekt – tippen oder diktieren"
+          aria-label="Notiz zum Objekt, wird als info.txt mit hochgeladen"
+          autocapitalize="sentences"
+          autocomplete="off"
+          spellcheck="true"
+          @input="onNoteInput"
+          @focus="onNoteFocus(true)"
+          @blur="onNoteFocus(false)"
+        />
+        <button
+          v-if="note && !isUploading"
+          type="button"
+          class="absolute right-1 top-1 flex h-10 w-10 items-center justify-center rounded-full text-muted active:bg-line"
+          aria-label="Notiz löschen"
+          @click="clearNote"
+        >
+          <AppIcon name="x" :size="16" />
+        </button>
+      </div>
+
       <!-- Läuft -->
       <div v-if="upload.status === 'running'" class="flex items-center gap-3">
         <div class="min-w-0 flex-1">
@@ -78,7 +133,7 @@ const buttonLabel = computed(() => {
           <button v-if="needsSettings" type="button" class="btn-ghost flex-1" @click="openSettings">
             Einstellungen
           </button>
-          <button type="button" class="btn-primary flex-1" :disabled="count === 0" @click="startUpload">
+          <button type="button" class="btn-primary flex-1" :disabled="count === 0" @click="onUpload">
             <AppIcon name="refresh" :size="18" />
             Erneut versuchen
           </button>
@@ -117,7 +172,7 @@ const buttonLabel = computed(() => {
           type="button"
           class="btn-primary w-full py-3.5 text-base"
           :disabled="count === 0"
-          @click="startUpload"
+          @click="onUpload"
         >
           <AppIcon name="upload" :size="19" />
           {{ buttonLabel }}

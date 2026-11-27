@@ -160,7 +160,10 @@ TLS-Sitzung der Steuerverbindung wiederverwendet. Das erledigt Bouncy Castle JSS
    (5 s lang „Rückgängig“ möglich). **Drehen** um 90° im Uhrzeigersinn: das zuletzt aufgenommene Foto über das
    Thumbnail rechts neben dem Auslöser, jedes andere über den Drehen-Knopf in der Lightbox. Das Drehen ist
    verlustfrei (nur EXIF-Ausrichtung des Originals), das Foto kommt gedreht auf dem Server an.
-4. **Hochladen:** „N Fotos hochladen“.
+4. **Notiz (optional):** Ins Feld über dem Upload-Knopf tippen oder über das Mikrofon der Tastatur diktieren,
+   z. B. Material, Maße, Mängel oder „Bild 3 zeigt die Rückseite“. Die Notiz wird sofort auf dem Gerät gespeichert
+   und geht beim Upload als `info.txt` mit.
+5. **Hochladen:** „N Fotos hochladen“.
 
 ### Was beim Upload passiert
 
@@ -169,9 +172,10 @@ TLS-Sitzung der Steuerverbindung wiederverwendet. Das erledigt Bouncy Castle JSS
    mit der eingestellten Qualität speichern. EXIF-Metadaten werden auf Wunsch übernommen (Orientation = normal).
 2. Im Startverzeichnis des Zugangs entsteht `_tmp_2026-11-20_211530/`.
 3. Upload als `01.webp`, `02.webp`, … Jede Datei wird auf dem Server auf die exakte Größe geprüft.
+   Gibt es eine Notiz, folgt sie als `info.txt` (UTF-8, Zeilenenden `\n`). Ohne Notiz fehlt die Datei.
 4. Nach Prüfung des vollständigen Ordnerinhalts folgt ein **atomares Umbenennen** in `2026-11-20_211530`
    (bei Namenskollision `…_2`). Ein unvollständiger Produktordner taucht so nie unter regulärem Namen auf.
-5. Erst danach wird die lokale Gruppe geleert. Auf dem Server wird nie etwas außerhalb des eigenen `_tmp_`-Ordners
+5. Erst danach wird die lokale Gruppe (Fotos und Notiz) geleert. Auf dem Server wird nie etwas außerhalb des eigenen `_tmp_`-Ordners
    gelöscht oder überschrieben.
 
 Bricht die Verbindung ab, bleiben alle Fotos lokal erhalten. „Erneut versuchen“ setzt im selben `_tmp_`-Ordner

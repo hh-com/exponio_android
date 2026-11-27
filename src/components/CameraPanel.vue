@@ -178,9 +178,10 @@ function rotateLast(): void {
 </script>
 
 <template>
-  <section class="relative flex flex-none flex-col">
+  <!-- Darf schrumpfen: Bei offener Tastatur (Notiz) wird die Vorschau kleiner statt die Upload-Leiste abzuschneiden. -->
+  <section class="relative flex min-h-0 flex-initial flex-col">
     <!-- Vorschaubereich: das "Loch" ist transparent, die native PreviewView liegt dahinter -->
-    <div class="relative overflow-hidden" style="height: min(calc(100vw * 4 / 3), 46vh)">
+    <div class="relative min-h-0 overflow-hidden" style="height: min(calc(100vw * 4 / 3), 46vh)">
       <div
         ref="hole"
         class="absolute inset-y-0 left-1/2 aspect-[3/4] max-w-[calc(100%-24px)] -translate-x-1/2 touch-none rounded-[18px]"
@@ -271,7 +272,7 @@ function rotateLast(): void {
     </div>
 
     <!-- Auslöserleiste -->
-    <div class="relative grid h-[92px] grid-cols-3 items-center bg-surface px-6">
+    <div class="relative grid h-[92px] shrink-0 grid-cols-3 items-center bg-surface px-6">
       <div class="flex justify-start">
         <button
           type="button"

@@ -12,6 +12,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -25,8 +26,9 @@ import kotlin.math.max
  *  2. Verbinden (SFTP: Host-Key muss bekannt sein; FTPS: TLS-Zertifikat muss gültig sein), Basispfad prüfen.
  *  3. Temporären Ordner `_tmp_<Zeitstempel>` anlegen bzw. wiederverwenden.
  *  4. Dateien `01.webp`, `02.webp`, … hochladen, jede per stat() auf exakte Größe verifizieren.
+ *     Gibt es eine Notiz zur Gruppe, folgt sie als `info.txt` (UTF-8) auf demselben Weg.
  *  5. Vollständigen Ordnerinhalt verifizieren, dann atomar per rename in `<Zeitstempel>` umbenennen.
- *  6. Erst danach lokale Gruppe löschen.
+ *  6. Erst danach lokale Gruppe (Fotos + Notiz) löschen.
  *
  * Der Fortschritt wird in files/upload/job.json persistiert: Bricht die Verbindung ab (oder wird die App
  * beendet), setzt der nächste Versuch im selben temporären Ordner fort und überspringt bereits
@@ -103,7 +105,8 @@ class Uploader(
         }
     }
 
-    private class Entry(val remoteName: String, val file: File, val key: String, val size: Long)
+    /** Eine hochzuladende Datei. [label] benennt sie in Fehlermeldungen („Bild 3“, „Notiz“). */
+    private class Entry(val remoteName: String, val file: File, val key: String, val size: Long, val label: String)
 
     private val baseDir = File(context.filesDir, "upload")
     private val workDir = File(baseDir, "work")
@@ -207,9 +210,12 @@ class Uploader(
                 }
             }
             val remoteName = (index + 1).toString().padStart(digits, '0') + "." + image.format.extension
-            entries += Entry(remoteName, work, work.name, work.length())
+            entries += Entry(remoteName, work, work.name, work.length(), "Bild ${index + 1}")
         }
-        // Veraltete Zwischenstände (andere Einstellungen, gelöschte Fotos) aufräumen.
+        // Notiz als letzte Datei: Ihr Inhalt steckt im Namen der Arbeitsdatei, eine Änderung nach einem
+        // abgebrochenen Upload wird also wie ein gedrehtes Foto erneut übertragen.
+        noteEntry()?.let { entries += it }
+        // Veraltete Zwischenstände (andere Einstellungen, gelöschte Fotos, geänderte Notiz) aufräumen.
         val keep = entries.map { it.file.name }.toSet()
         workDir.listFiles()?.forEach { if (it.name !in keep) it.delete() }
 
@@ -253,7 +259,8 @@ class Uploader(
 
         val tmpName = TMP_PREFIX + job.dirName
         val tmpPath = RemotePath.join(base, tmpName)
-        val total = entries.size
+        // Der Fortschritt zählt Bilder; die Notiz am Ende läuft unter dem letzten Bild mit.
+        val total = job.photoIds.size
         val totalBytes = max(1L, entries.sumOf { it.size })
         val expectedNames = entries.map { it.remoteName }.toSet()
 
@@ -293,11 +300,12 @@ class Uploader(
         var doneBytes = 0L
         entries.forEachIndexed { index, entry ->
             checkCancelled()
+            val current = minOf(index + 1, total)
             val remotePath = RemotePath.join(tmpPath, entry.remoteName)
             val alreadyDone = job.uploaded[entry.remoteName] == entry.key && remoteBefore[entry.remoteName] == entry.size
 
             if (!alreadyDone) {
-                emit(onProgress, Progress(PHASE_UPLOAD, index + 1, total, uploadFraction(doneBytes, totalBytes)), force = true)
+                emit(onProgress, Progress(PHASE_UPLOAD, current, total, uploadFraction(doneBytes, totalBytes)), force = true)
                 job.uploaded.remove(entry.remoteName)
                 saveJob(job)
 
@@ -312,7 +320,7 @@ class Uploader(
                         sent += count
                         emit(
                             onProgress,
-                            Progress(PHASE_UPLOAD, index + 1, total, uploadFraction(startBytes + sent, totalBytes)),
+                            Progress(PHASE_UPLOAD, current, total, uploadFraction(startBytes + sent, totalBytes)),
                             force = false,
                         )
                         !cancelled.get()
@@ -324,26 +332,26 @@ class Uploader(
                 if (remoteSize != entry.size) {
                     throw TransferException(
                         ErrorCode.VERIFY_FAILED,
-                        "Bild ${index + 1}: Größe auf dem Server stimmt nicht ($remoteSize statt ${entry.size} Bytes).",
+                        "${entry.label}: Größe auf dem Server stimmt nicht ($remoteSize statt ${entry.size} Bytes).",
                     )
                 }
                 job.uploaded[entry.remoteName] = entry.key
                 saveJob(job)
             }
             doneBytes += entry.size
-            emit(onProgress, Progress(PHASE_UPLOAD, index + 1, total, uploadFraction(doneBytes, totalBytes)), force = true)
+            emit(onProgress, Progress(PHASE_UPLOAD, current, total, uploadFraction(doneBytes, totalBytes)), force = true)
         }
 
         // ---- Phase 3: Gesamtverifikation + atomares Umbenennen ---------------------------------
         checkCancelled()
         emit(onProgress, Progress(PHASE_FINALIZE, total, total, 0.98), force = true)
         val listing = fs.listFiles(tmpPath)
-        entries.forEachIndexed { index, entry ->
+        for (entry in entries) {
             val size = listing[entry.remoteName]
             if (size != entry.size) {
                 throw TransferException(
                     ErrorCode.VERIFY_FAILED,
-                    "Verifikation fehlgeschlagen: ${entry.remoteName} (Bild ${index + 1}) fehlt oder ist unvollständig.",
+                    "Verifikation fehlgeschlagen: ${entry.remoteName} (${entry.label}) fehlt oder ist unvollständig.",
                 )
             }
         }
@@ -373,9 +381,26 @@ class Uploader(
 
     private fun finish(job: Job, entries: List<Entry>, finalPath: String, finalName: String): Result {
         store.delete(job.photoIds)
+        store.clearNote()
         workDir.listFiles()?.forEach { it.delete() }
         synchronized(this) { jobFile.delete() }
-        return Result(finalPath, finalName, entries.size, entries.sumOf { it.size })
+        return Result(finalPath, finalName, job.photoIds.size, entries.sumOf { it.size })
+    }
+
+    /**
+     * Notiz der Gruppe als Arbeitsdatei, oder null ohne Notiz. Zeilenenden werden vereinheitlicht, Leerraum
+     * am Anfang und Ende entfernt; die Datei ist UTF-8 ohne BOM und endet mit einem Zeilenumbruch.
+     */
+    private fun noteEntry(): Entry? {
+        val text = store.note().replace("\r\n", "\n").replace('\r', '\n').trim()
+        if (text.isEmpty()) return null
+        val bytes = (text + "\n").toByteArray(Charsets.UTF_8)
+        val hash = MessageDigest.getInstance("SHA-256").digest(bytes)
+            .take(8)
+            .joinToString("") { "%02x".format(it) }
+        val work = File(workDir, "note_$hash.txt")
+        if (!work.isFile || work.length() != bytes.size.toLong()) work.writeBytes(bytes)
+        return Entry(NOTE_FILE_NAME, work, work.name, bytes.size.toLong(), "Notiz")
     }
 
     private fun pickFreeName(fs: RemoteFs, base: String, dirName: String): String {
@@ -442,6 +467,7 @@ class Uploader(
     companion object {
         private const val TAG = "PtUploader"
         const val TMP_PREFIX = "_tmp_"
+        const val NOTE_FILE_NAME = "info.txt"
 
         const val PHASE_PROCESS = "process"
         const val PHASE_CONNECT = "connect"

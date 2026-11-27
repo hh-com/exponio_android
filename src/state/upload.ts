@@ -3,6 +3,7 @@ import { PtTransfer, isNative, toNativeError } from '../native/plugins'
 import type { NativeError, UploadProgress, UploadResult, UploadState } from '../native/plugins'
 import { connection } from './connection'
 import { flushDeletes, loadGroup, photos, settleRotations } from './group'
+import { flushNote, loadNote } from './note'
 import { imagePayload, serverPayload } from './settings'
 import { setVolumeKeys } from './camera'
 import { showToast } from './toast'
@@ -50,6 +51,8 @@ export async function startUpload(): Promise<void> {
   window.clearTimeout(doneTimer)
   await flushDeletes()
   await settleRotations()
+  // Sonst ginge eine ältere Fassung der Notiz als info.txt hoch.
+  if (!(await flushNote())) return
 
   const ids = photos.value.map((p) => p.id)
   if (ids.length === 0) return
@@ -69,7 +72,7 @@ export async function startUpload(): Promise<void> {
     connection.state = 'ok'
     connection.message = ''
     connection.checkedAt = Date.now()
-    await loadGroup()
+    await Promise.all([loadGroup(), loadNote()])
     showToast(`${result.count} ${result.count === 1 ? 'Foto' : 'Fotos'} hochgeladen → ${result.dirName}`, {
       tone: 'success',
       duration: 4500,
